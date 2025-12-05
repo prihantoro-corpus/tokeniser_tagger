@@ -10,22 +10,18 @@ EXCEPTION_FILENAME = 'exception.txt'
 
 # --- 1. TreeTagger Tokenization Logic (Perl Equivalent) ---
 
-# Characters that should be cut off/separated at the beginning of a word
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
-
-# Characters that should be cut off/separated at the end of a word
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_words: Set[str]) -> List[str]:
     """
-    Applies the full tokenization rules with the requested 3-layer precedence:
-    1. Exception List Check (Highest Priority)
-    2. Abbreviation Regex Check
-    3. General Tokenization
+    Applies the full tokenization rules with strict priority. 
+    If a high-priority match (Exception, Abbreviation, Compound) is found, 
+    LOWER priority splitting rules are skipped for that word.
     """
     tokens = []
     
-    # 0. Initial cleanup and whitespace standardization
+    # Initial cleanup and whitespace standardization
     temp_text = ' ' + text_segment + ' '
     temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
     temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
@@ -37,23 +33,34 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
         current_word = word
         suffix = []
         
-        # --- PRECEDENCE CHECK 1: Exception List ---
-        # Checks if the word, *after* initial spacing rules, is a defined exception.
+        # -------------------------------------------------------------
+        # --- PRIORITY CHECKS (Must skip subsequent logic if matched) ---
+        # -------------------------------------------------------------
+        
+        # --- PRIORITY 1: Exception List (Exact Match) ---
         if current_word in exception_words:
             tokens.append(current_word)
-            continue
+            continue # Skip all lower priority splitting
             
-        # --- PRECEDENCE CHECK 2: Abbreviation Regex ---
-        # This check is crucial and happens *before* punctuation stripping.
+        # --- PRIORITY 2: Abbreviation Regex (Pattern Match) ---
         # Catches patterns like A. or U.S.A. (must end with a period).
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
-            # If it matches, treat it as a single token and skip splitting.
             tokens.append(current_word)
-            continue
-        
-        # --- GENERAL TOKENIZATION (If 1 & 2 failed) ---
+            continue # Skip all lower priority splitting
+            
+        # --- PRIORITY 3: Hyphenated Compound Words (Indonesian) ---
+        # Ensures words like 'Buku-buku' are not split by punctuation stripping.
+        # Checks for internal hyphen but excludes clitics (which are processed later).
+        if '-' in current_word and not re.match(r"^[A-Za-z]+-[nya|mu|ku]$", current_word.lower()):
+            tokens.append(current_word)
+            continue # Skip all lower priority splitting
+
+        # -------------------------------------------------------------
+        # --- SPLITTING AND DISAMBIGUATION (Default Logic) ---
+        # -------------------------------------------------------------
         
         # 1. Strip external punctuation (do...while equivalent)
+        # This handles cases like "(word)" -> "(" "word" ")"
         while True:
             finished = True
             
@@ -75,14 +82,13 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
                 break
         
         # 2. Re-check Exception list after stripping surrounding punctuation
-        # (e.g., if input was "(U.S.A.)", U.S.A. remains one token)
+        # (e.g., if input was "(U.S.A.)", U.S.A. remains one token after stripping parentheses)
         if current_word in exception_words:
             tokens.append(current_word)
             tokens.extend(suffix)
             continue
             
-        # 3. Disambiguate periods (The general period separation logic)
-        # If word ends with '.' AND is not '...' and not a number, separate the period.
+        # 3. Disambiguate periods (Splits the period if it is NOT an abbreviation)
         if current_word.endswith('.') and current_word != '...' and not re.match(r"^[0-9]+\.$", current_word):
             root = current_word[:-1]
             period = '.'
@@ -99,11 +105,11 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
 
     return tokens
 
-# --- 2. File Loading Functions ---
+# --- 2. File Loading Functions (No Change) ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # (Implementation remains the same)
+    # ... (Implementation remains the same) ...
     lexicon_words = set()
     try:
         script_dir = os.path.dirname(__file__)
@@ -128,7 +134,7 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 
 @st.cache_resource 
 def read_exceptions(exception_file: str) -> Set[str]:
-    # (Implementation remains the same)
+    # ... (Implementation remains the same) ...
     exception_words = set()
     try:
         script_dir = os.path.dirname(__file__)
@@ -152,7 +158,7 @@ def read_exceptions(exception_file: str) -> Set[str]:
         return set()
 
 
-# --- 3. Core Logic Functions (Clitic Separator) ---
+# --- 3. Core Logic Functions (Clitic Separator - No Change) ---
 
 def preprocess_text(text: str) -> str:
     # (Implementation remains the same)
@@ -160,9 +166,9 @@ def preprocess_text(text: str) -> str:
     return text
 
 def process_word(word: str, lexicon_words: Set[str]) -> str:
-    # (Implementation remains the same, adjusted for no punctuation handling)
+    # (Implementation remains the same)
     original_word = word
-    word_without_punct = word
+    word_without_punct = word 
     
     if not word_without_punct:
         return original_word
@@ -186,10 +192,9 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             
     return original_word
 
-# --- 4. HTML/Text Processing Class ---
+# --- 4. HTML/Text Processing Class (No Change) ---
 
 class TokenisingHTMLParser(HTMLParser):
-    # (Implementation remains the same, passing exception_words)
     def __init__(self, lexicon_words, exception_words, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lexicon_words = lexicon_words
@@ -208,20 +213,18 @@ class TokenisingHTMLParser(HTMLParser):
     def handle_data(self, data):
         text = preprocess_text(data)
         
-        # Pass both lexicon and exception sets to the tokenization function
         new_tokens = tree_tagger_split(text, self.lexicon_words, self.exception_words)
         self.processed_tokens.extend(new_tokens)
     
     def get_tokenized_output(self) -> str:
         return " ".join(self.processed_tokens)
 
-# --- 5. Main Streamlit Application Function ---
+# --- 5. Main Streamlit Application Function (No Change) ---
 
 def main():
     st.title("🇮🇩 Indonesian Tokeniser (TreeTagger Style)")
     st.markdown("---")
 
-    # Load both files
     lexicon_set = read_lexicon(LEXICON_FILENAME)
     exception_set = read_exceptions(EXCEPTION_FILENAME)
     
@@ -245,10 +248,7 @@ def main():
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
-            st.markdown("This output follows 3-layer precedence:")
-            st.markdown("* **1st:** Exact match in `exception.txt` (e.g., `U.S.A.`)")
-            st.markdown("* **2nd:** General abbreviation pattern match (`A.B.C.`)")
-            st.markdown("* **3rd:** Punctuation splitting, then Clitic separation.")
+            st.markdown("This version uses strict priority: **Exception List** or **Abbreviation Rule** matches completely skip splitting.")
             
             st.code(final_processed_text, language='text')
             
