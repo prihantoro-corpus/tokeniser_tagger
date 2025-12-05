@@ -12,27 +12,35 @@ EXCEPTION_FILENAME = 'exception.txt'
 PARAM_FILE = 'indonesian.par' 
 TT_INSTALL_DIR = "treetagger_install"
 
-# --- 1. TreeTagger Setup and Tagger Function ---
+# --- 1. TreeTagger Setup and Tagger Function (Colab Environment Fix) ---
 
 @st.cache_resource
 def setup_treetagger():
     """
-    Checks if TreeTagger was installed by the external shell script and returns the path.
-    This function relies on the install_treetagger.sh script running successfully 
-    due to the configuration in .streamlit/config.toml.
+    Checks if TreeTagger was installed by the external shell script and 
+    EXPLICITLY sets environment variables to mimic the working Colab environment.
     """
-    # Check if the core executable exists
-    if os.path.exists(os.path.join(TT_INSTALL_DIR, 'cmd', 'tree-tagger')):
-        st.sidebar.success("✅ TreeTagger binaries found (pre-installed).")
-        
-        # Check if the parameter file was copied correctly
-        if os.path.exists(os.path.join(TT_INSTALL_DIR, 'lib', PARAM_FILE)):
-            return os.path.abspath(TT_INSTALL_DIR)
-        else:
-            st.sidebar.error(f"❌ Error: {PARAM_FILE} not found in TreeTagger lib directory.")
-            return None
+    
+    BASE_PATH = os.path.abspath(TT_INSTALL_DIR)
+    CMD_PATH = os.path.join(BASE_PATH, 'cmd')
+    EXECUTABLE_PATH = os.path.join(CMD_PATH, 'tree-tagger') 
+    
+    # 1. Check if the core executable exists (installed by install_treetagger.sh)
+    if not os.path.exists(EXECUTABLE_PATH):
+        st.sidebar.error("❌ TreeTagger executable not found. Installation script likely failed.")
+        return None
+
+    # 2. CRITICAL FIX: EXPLICITLY SET ENV VARS for the wrapper to find the executable
+    os.environ['PATH'] = f"{os.environ['PATH']}:{CMD_PATH}"
+    os.environ['TREETAGGER_HOME'] = BASE_PATH
+    os.environ['TAGDIR'] = BASE_PATH
+    
+    # 3. Final check for parameter file
+    if os.path.exists(os.path.join(BASE_PATH, 'lib', PARAM_FILE)):
+        st.sidebar.success("✅ TreeTagger environment successfully configured.")
+        return BASE_PATH
     else:
-        st.sidebar.error("❌ TreeTagger binaries NOT found. Installation script likely failed.")
+        st.sidebar.error(f"❌ Error: {PARAM_FILE} not found in TreeTagger lib directory.")
         return None
 
 def run_pos_tagger(token_list: List[str], tagger_dir: str):
@@ -49,7 +57,6 @@ def run_pos_tagger(token_list: List[str], tagger_dir: str):
     )
     
     try:
-        # Tagger expects input as a list of tokens (one token per line)
         tags = tagger.tag_list(token_list)
         return tags
     except Exception as e:
@@ -57,7 +64,7 @@ def run_pos_tagger(token_list: List[str], tagger_dir: str):
         st.code(f"Error details: {e}")
         return ["Error during tagging."]
 
-# --- 2. Pass 2: Full Tokenization Logic (Perl Equivalent) ---
+# --- 2. Pass 2: Full Tokenization Logic (Finalized) ---
 
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
@@ -130,7 +137,6 @@ def full_tokenization_pipeline(clitic_separated_text: str, exception_words: Set[
             root = current_word[:-1]
             period = '.'
             
-            # Note: At this stage, clitics are already separated (e.g., 'rumah -nya')
             tokens.append(root) 
             tokens.append(period)
             tokens.extend(suffix)
@@ -220,7 +226,7 @@ class CliticSeparatorParser(HTMLParser):
     def get_tokenized_output(self) -> str:
         return re.sub(r'\s+', ' ', self.processed_text.strip())
 
-# --- 4. File Loading Functions (No Change) ---
+# --- 4. File Loading Functions ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
