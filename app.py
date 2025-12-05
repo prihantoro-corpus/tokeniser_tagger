@@ -3,6 +3,10 @@ import re
 from html.parser import HTMLParser
 import os
 from typing import List, Set
+import configparser # <-- ADD THIS IMPORT
+# CRITICAL FIX for Python 3.12+ (SafeConfigParser removal)
+# This resolves the deployment error by restoring the missing class name.
+configparser.SafeConfigParser = configparser.ConfigParser # <-- ADD THIS LINE
 import treetaggerwrapper
 import shutil
 
@@ -12,7 +16,7 @@ EXCEPTION_FILENAME = 'exception.txt'
 PARAM_FILE = 'indonesian.par' 
 TT_INSTALL_DIR = "treetagger_install"
 
-# --- 1. TreeTagger Setup and Tagger Function (Colab Environment Fix) ---
+# --- 1. TreeTagger Setup and Tagger Function ---
 
 @st.cache_resource
 def setup_treetagger():
