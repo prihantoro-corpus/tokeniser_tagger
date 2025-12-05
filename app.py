@@ -8,7 +8,7 @@ from typing import List, Set
 LEXICON_FILENAME = 'lexicon_only.txt'
 EXCEPTION_FILENAME = 'exception.txt' 
 
-# --- 1. TreeTagger Tokenization Logic (Perl Equivalent) ---
+# --- 1. TreeTagger Tokenization Logic (Finalized) ---
 
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
@@ -43,13 +43,11 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
             continue 
             
         # --- PRIORITY 2: Abbreviation Regex (Pattern Match) ---
-        # Catches patterns like A. or U.S.A. (must end with a period).
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
             tokens.append(current_word)
             continue 
             
         # --- PRIORITY 3: Hyphenated Compound Words (Indonesian) ---
-        # Ensures words like 'Buku-buku' are not split.
         if '-' in current_word and not re.match(r"^[A-Za-z]+-[nya|mu|ku]$", current_word.lower()):
             tokens.append(current_word)
             continue 
@@ -62,14 +60,12 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
         while True:
             finished = True
             
-            # Cut off preceding punctuation ($PChar)
             match_p = re.match(r"^(" + P_CHAR + r")(.+)$", current_word)
             if match_p:
                 tokens.append(match_p.group(1)) 
                 current_word = match_p.group(2)
                 finished = False
 
-            # Cut off trailing punctuation ($FChar)
             match_f = re.match(r"^(.+)(" + F_CHAR + r")$", current_word)
             if match_f:
                 suffix.insert(0, match_f.group(2)) 
@@ -85,12 +81,11 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
             tokens.extend(suffix)
             continue
             
-        # 3. Disambiguate periods (Splits the period if it is NOT an abbreviation)
+        # 3. Disambiguate periods
         if current_word.endswith('.') and current_word != '...' and not re.match(r"^[0-9]+\.$", current_word):
             root = current_word[:-1]
             period = '.'
             
-            # Apply clitic separation (lexicon check) to the root word
             tokens.append(process_word(root, lexicon_words))
             tokens.append(period)
             tokens.extend(suffix)
@@ -102,7 +97,7 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
 
     return tokens
 
-# --- 2. File Loading Functions (No Change) ---
+# --- 2. File Loading Functions ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
@@ -155,7 +150,7 @@ def read_exceptions(exception_file: str) -> Set[str]:
         return set()
 
 
-# --- 3. Core Logic Functions (Clitic Separator - No Change) ---
+# --- 3. Core Logic Functions (Clitic Separator) ---
 
 def preprocess_text(text: str) -> str:
     # (Implementation remains the same)
@@ -163,7 +158,10 @@ def preprocess_text(text: str) -> str:
     return text
 
 def process_word(word: str, lexicon_words: Set[str]) -> str:
-    # (Implementation remains the same)
+    """
+    Applies clitic separation. If an isolated word is a pure clitic, 
+    it is transformed into the clitic token form ('-nya').
+    """
     original_word = word
     word_without_punct = word 
     
@@ -172,9 +170,17 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
 
     lower_word = word_without_punct.lower()
     
+    # 1. Handle isolated clitics (e.g., 'nya' as a separate word)
+    if lower_word == 'nya':
+        return '-nya'
+    if lower_word == 'mu':
+        return '-mu'
+
+    # Check if the full word is in the lexicon (no split if it is)
     if lower_word in lexicon_words:
         return original_word
 
+    # Check for clitic suffixes ('nya', 'mu', 'ku')
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
     for clitic, length in clitics.items():
         if lower_word.endswith(clitic):
@@ -182,6 +188,7 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             if root_word.lower() in lexicon_words:
                 return f"{root_word} -{clitic}" 
     
+    # Check for 'ku' prefix
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
         root_word = word_without_punct[2:]
         if root_word.lower() in lexicon_words:
@@ -189,7 +196,7 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             
     return original_word
 
-# --- 4. HTML/Text Processing Class (No Change) ---
+# --- 4. HTML/Text Processing Class ---
 
 class TokenisingHTMLParser(HTMLParser):
     def __init__(self, lexicon_words, exception_words, *args, **kwargs):
@@ -216,7 +223,7 @@ class TokenisingHTMLParser(HTMLParser):
     def get_tokenized_output(self) -> str:
         return " ".join(self.processed_tokens)
 
-# --- 5. Main Streamlit Application Function (No Change) ---
+# --- 5. Main Streamlit Application Function ---
 
 def main():
     st.title("🇮🇩 Indonesian Tokeniser (TreeTagger Style)")
@@ -245,7 +252,7 @@ def main():
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
-            st.markdown("This version uses **Absolute Priority**. If a word matches an Exception or Abbreviation rule, it skips all splitting logic.")
+            st.markdown("This version ensures **U.S.A.** is treated as a single token by prioritizing Abbreviation Rules.")
             
             st.code(final_processed_text, language='text')
             
