@@ -4,85 +4,73 @@ from html.parser import HTMLParser
 import os
 from typing import List, Set
 import treetaggerwrapper
-import subprocess
 import shutil
 
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
 EXCEPTION_FILENAME = 'exception.txt' 
-PARAM_FILE = 'indonesian.par' # Your uploaded parameter file
+PARAM_FILE = 'indonesian.par' 
+TT_INSTALL_DIR = "treetagger_install"
 
-# --- TreeTagger Setup (Must run once during deployment) ---
+# --- 1. TreeTagger Setup and Tagger Function ---
 
 @st.cache_resource
 def setup_treetagger():
     """
-    Downloads and installs the TreeTagger executable into the Streamlit environment.
-    This mimics running an install script during deployment.
+    Checks if TreeTagger was installed by the external shell script and returns the path.
+    This function relies on the install_treetagger.sh script running successfully 
+    due to the configuration in .streamlit/config.toml.
     """
-    # Define installation directory
-    INSTALL_DIR = "treetagger_install"
-    os.makedirs(INSTALL_DIR, exist_ok=True)
-    
-    # 1. Download TreeTagger (using the path from the wrapper library)
-    try:
-        if not os.path.exists(os.path.join(INSTALL_DIR, 'cmd', 'tree-tagger')):
-            st.warning("Attempting to download TreeTagger binaries...")
-            treetaggerwrapper.install_tagger(target_dir=INSTALL_DIR)
-            st.success("TreeTagger binaries installed.")
+    # Check if the core executable exists
+    if os.path.exists(os.path.join(TT_INSTALL_DIR, 'cmd', 'tree-tagger')):
+        st.sidebar.success("✅ TreeTagger binaries found (pre-installed).")
         
-        # 2. Copy the parameter file into the TreeTagger 'lib' directory
-        param_src = os.path.join(os.path.dirname(__file__), PARAM_FILE)
-        param_dest_dir = os.path.join(INSTALL_DIR, 'lib')
-        os.makedirs(param_dest_dir, exist_ok=True)
-        param_dest = os.path.join(param_dest_dir, PARAM_FILE)
-        
-        if os.path.exists(param_src) and not os.path.exists(param_dest):
-            shutil.copy(param_src, param_dest)
-            st.info(f"Copied {PARAM_FILE} to {param_dest_dir}")
-
-        return os.path.abspath(INSTALL_DIR)
-    
-    except Exception as e:
-        st.error(f"Failed to set up TreeTagger: {e}. Ensure required dependencies are available.")
+        # Check if the parameter file was copied correctly
+        if os.path.exists(os.path.join(TT_INSTALL_DIR, 'lib', PARAM_FILE)):
+            return os.path.abspath(TT_INSTALL_DIR)
+        else:
+            st.sidebar.error(f"❌ Error: {PARAM_FILE} not found in TreeTagger lib directory.")
+            return None
+    else:
+        st.sidebar.error("❌ TreeTagger binaries NOT found. Installation script likely failed.")
         return None
-
-# --- 2. Pass 3: POS Tagger Function ---
 
 def run_pos_tagger(token_list: List[str], tagger_dir: str):
     """
-    Runs the TreeTagger wrapper on the final token list.
+    Runs the TreeTagger wrapper on the final token list, producing Token|Tag|Lemma.
     """
     if not tagger_dir:
         return ["Error: Tagger setup failed."]
         
     tagger = treetaggerwrapper.TreeTagger(
-        TAGLANG='indonesian', # Custom language code for Tagger output
+        TAGLANG='indonesian', 
         TAGDIR=tagger_dir,
-        TAGPARFILE=PARAM_FILE # Use the custom parameter file
+        TAGPARFILE=PARAM_FILE 
     )
     
     try:
         # Tagger expects input as a list of tokens (one token per line)
-        # It handles the token -> tag/lemma output
         tags = tagger.tag_list(token_list)
         return tags
     except Exception as e:
-        st.error(f"TreeTagger execution failed: {e}. Check indonesian.par path/format.")
+        st.error(f"TreeTagger execution failed. Ensure {PARAM_FILE} is valid.")
+        st.code(f"Error details: {e}")
         return ["Error during tagging."]
 
-# --- 3. Pass 2: Full Tokenization Logic (Perl Equivalent) ---
+# --- 2. Pass 2: Full Tokenization Logic (Perl Equivalent) ---
 
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
 
-def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_words: Set[str]) -> List[str]:
-    # (Use the FINAL CORRECTED logic from the previous step)
-    # ... [Insert the complete and corrected tree_tagger_split function logic here] ...
+def full_tokenization_pipeline(clitic_separated_text: str, exception_words: Set[str]) -> List[str]:
+    """
+    Applies the full TreeTagger tokenization rules (punctuation, abbreviation, period disambiguation)
+    to the already clitic-separated text.
+    """
     tokens = []
     
-    # Initial cleanup and whitespace standardization
-    temp_text = ' ' + text_segment + ' '
+    # 1. Initial cleanup and whitespace standardization (Perl logic equivalent)
+    temp_text = ' ' + clitic_separated_text + ' '
     temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
     temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
     temp_text = re.sub(r'([.,:])([^\s0-9.])', r'\1 \2', temp_text)
@@ -93,21 +81,24 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
         current_word = word
         suffix = []
         
-        # --- ABSOLUTE PRIORITY CHECKS ---
+        # --- ABSOLUTE PRIORITY CHECKS (If matched, skip splitting) ---
         
+        # PRIORITY 1: Exception List (Exact Match)
         if current_word in exception_words:
             tokens.append(current_word)
             continue 
             
+        # PRIORITY 2: Abbreviation Regex (Pattern Match)
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
             tokens.append(current_word)
             continue 
             
+        # PRIORITY 3: Hyphenated Compound Words 
         if re.match(r"^[A-Za-z]+-[A-Za-z]+$", current_word):
              tokens.append(current_word)
              continue
         
-        # --- SPLITTING AND DISAMBIGUATION ---
+        # --- SPLITTING AND DISAMBIGUATION (Default Logic) ---
         
         # 1. Strip external punctuation
         while True:
@@ -139,12 +130,12 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
             root = current_word[:-1]
             period = '.'
             
-            # Note: This is where we break the token to prepare for tagging
+            # Note: At this stage, clitics are already separated (e.g., 'rumah -nya')
             tokens.append(root) 
             tokens.append(period)
             tokens.extend(suffix)
             continue
-
+            
         # 4. Final word token
         tokens.append(current_word)
         tokens.extend(suffix)
@@ -152,13 +143,17 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
     return tokens
 
 
-# --- 4. Pass 1: Clitic Separation Logic (Used for intermediate tokenizing) ---
+# --- 3. Pass 1: Clitic Separation Logic (Finalized) ---
+
+def preprocess_text(text: str) -> str:
+    """Handles quotes and the prefix 'ku' as separate words."""
+    text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
+    return text
 
 def process_word_clitic(word: str, lexicon_words: Set[str]) -> str:
-    # ... [Insert the final corrected process_word_clitic function logic here] ...
+    """Applies case-insensitive clitic separation and basic punctuation stripping."""
     original_word = word
     
-    # 1. Save and remove end punctuation 
     punctuation_match = re.search(r"([!?.,'\"()\[\]{}:;.../\\~_-])$", word)
     punctuation = punctuation_match.group(1) if punctuation_match else ""
     word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
@@ -168,17 +163,16 @@ def process_word_clitic(word: str, lexicon_words: Set[str]) -> str:
 
     lower_word = word_without_punct.lower()
     
-    # Handle isolated clitics 
+    # 1. Handle isolated clitics 
     if lower_word == 'nya':
         return f"-nya {punctuation}".strip()
     if lower_word == 'mu':
         return f"-mu {punctuation}".strip()
 
-    # Check if the full word is in the lexicon 
     if lower_word in lexicon_words:
         return original_word
 
-    # Check for clitic suffixes ('nya', 'mu', 'ku')
+    # 2. Check for clitic suffixes
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
     for clitic, length in clitics.items():
         if lower_word.endswith(clitic):
@@ -186,7 +180,7 @@ def process_word_clitic(word: str, lexicon_words: Set[str]) -> str:
             if root_word.lower() in lexicon_words:
                 return f"{root_word} -{clitic} {punctuation}".strip()
     
-    # Check for 'ku' prefix
+    # 3. Check for 'ku' prefix
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
         root_word = word_without_punct[2:]
         if root_word.lower() in lexicon_words:
@@ -226,16 +220,15 @@ class CliticSeparatorParser(HTMLParser):
     def get_tokenized_output(self) -> str:
         return re.sub(r'\s+', ' ', self.processed_text.strip())
 
-# --- 5. File Loading Functions (No Change) ---
+# --- 4. File Loading Functions (No Change) ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # ... read file content ...
+    # (Simplified reading)
     lexicon_words = set()
     try:
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, lexicon_file)
-        
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 word = line.strip().lower()
@@ -249,12 +242,11 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 
 @st.cache_resource 
 def read_exceptions(exception_file: str) -> Set[str]:
-    # ... read file content ...
+    # (Simplified reading)
     exception_words = set()
     try:
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, exception_file)
-        
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 word = line.strip() 
@@ -266,7 +258,7 @@ def read_exceptions(exception_file: str) -> Set[str]:
         st.sidebar.warning("❗ Exception file not found. Proceeding without.")
         return set()
 
-# --- 6. Main Streamlit Application Function ---
+# --- 5. Main Streamlit Application Function ---
 
 def main():
     st.title("🇮🇩 Indonesian Tokeniser + Tagger Pipeline")
@@ -279,9 +271,6 @@ def main():
     
     if not lexicon_set:
         st.warning("Application halted: Lexicon is required.")
-        return
-    if not tagger_install_dir:
-        st.warning("Application halted: TreeTagger setup failed.")
         return
 
     st.header("1. Input Text")
@@ -300,7 +289,8 @@ def main():
             
             st.session_state['clitic_output'] = clitic_output
             st.session_state['stage1_done'] = True
-            st.session_state['stage2_done'] = False # Reset subsequent stages
+            st.session_state['stage2_done'] = False
+            st.session_state['stage3_done'] = False 
             
             st.subheader("Stage 1 Output: Clitic Separation")
             st.code(clitic_output, language='text')
@@ -316,12 +306,11 @@ def main():
 
         if st.button("Proceed to Tokenization (Stage 2)"):
             
-            # Use the clitic-separated text as input
-            # This requires passing the string, and the function splits it internally
             tokens_pass2 = full_tokenization_pipeline(clitic_output, exception_set)
             
             st.session_state['tokens_pass2'] = tokens_pass2
             st.session_state['stage2_done'] = True
+            st.session_state['stage3_done'] = False
             
             st.subheader("Stage 2 Output: Final Tokens")
             st.code('\n'.join(tokens_pass2), language='text')
@@ -334,7 +323,6 @@ def main():
         
         tokens_pass2 = st.session_state['tokens_pass2']
         
-        # Check if Tagger is installed before showing button
         if tagger_install_dir:
             if st.button("Run POS Tagger (Stage 3)"):
                 
