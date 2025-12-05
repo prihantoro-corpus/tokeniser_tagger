@@ -1,0 +1,8 @@
+[runner]
+# Use a version of Python known to be stable with older dependencies
+# like TreeTaggerWrapper.
+magicEnabled = false
+
+[server]
+# Pin to a stable Python version
+maxUploadSize = 200 # Set a reasonable limit for file uploads (optional)
