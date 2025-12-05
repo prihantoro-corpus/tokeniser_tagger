@@ -1,9 +1,8 @@
 [general]
-# The install command should remain as you defined it
 install_command = "bash install_treetagger.sh && pip install -r requirements.txt"
 
+[runner]
+magicEnabled = false
+
 [server]
-# Explicitly tell Streamlit to use a known stable Python version (e.g., 3.10)
-# This is often done implicitly by setting the Python runtime, 
-# but forcing it here or via a dedicated file is necessary.
-# NOTE: Streamlit Cloud usually relies on a 'runtime.txt' file for this.
+maxUploadSize = 200
