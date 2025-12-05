@@ -1,2 +1,2 @@
 streamlit
-treetaggerwrapper==2.4.1
+treetaggerwrapper==2.3
