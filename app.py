@@ -150,7 +150,7 @@ def read_exceptions(exception_file: str) -> Set[str]:
         return set()
 
 
-# --- 3. Core Logic Functions (Clitic Separator) ---
+# --- 3. Core Logic Functions (Clitic Separator - Case-Insensitive Fix) ---
 
 def preprocess_text(text: str) -> str:
     # (Implementation remains the same)
@@ -159,8 +159,7 @@ def preprocess_text(text: str) -> str:
 
 def process_word(word: str, lexicon_words: Set[str]) -> str:
     """
-    Applies clitic separation. If an isolated word is a pure clitic, 
-    it is transformed into the clitic token form ('-nya').
+    Applies clitic separation using case-insensitive checks against the lexicon.
     """
     original_word = word
     word_without_punct = word 
@@ -183,16 +182,27 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
     # Check for clitic suffixes ('nya', 'mu', 'ku')
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
     for clitic, length in clitics.items():
+        # Check for suffix using the lowercase word
         if lower_word.endswith(clitic):
+            # Extract the root word, preserving the original casing
             root_word = word_without_punct[:-length]
+            
+            # Check the lowercase root word against the lexicon
             if root_word.lower() in lexicon_words:
+                # The word is a valid root + clitic. Return split form.
                 return f"{root_word} -{clitic}" 
     
     # Check for 'ku' prefix
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
-        root_word = word_without_punct[2:]
-        if root_word.lower() in lexicon_words:
-            return f"ku- {root_word}"
+        # Check for prefix using the lowercase word
+        if lower_word.startswith('ku'):
+            root_word = word_without_punct[2:]
+            
+            # Check the lowercase root word against the lexicon
+            if root_word.lower() in lexicon_words:
+                # Preserve the original capitalization of 'Ku' or 'ku'
+                prefix = original_word[:2] 
+                return f"{prefix}- {root_word}"
             
     return original_word
 
@@ -240,7 +250,7 @@ def main():
     
     user_input = st.text_area(
         "Enter your Indonesian sentence or text:",
-        "Buku-buku nya ada di U.S.A. Kulihat rumahmu (yang) besar!",
+        "Buku-bukunya ada di U.S.A. Kulihat rumahmu (yang) besar!",
         height=150
     )
     
@@ -252,7 +262,7 @@ def main():
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
-            st.markdown("This version ensures **U.S.A.** is treated as a single token by prioritizing Abbreviation Rules.")
+            st.markdown("This version uses **Case-Insensitive Clitic Logic** and **Absolute Priority** for Exceptions.")
             
             st.code(final_processed_text, language='text')
             
