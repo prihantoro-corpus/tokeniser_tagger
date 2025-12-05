@@ -1,12 +1,9 @@
 [general]
-# This command tells Streamlit to run the shell script first, 
-# then install Python dependencies.
+# The install command should remain as you defined it
 install_command = "bash install_treetagger.sh && pip install -r requirements.txt"
 
-[runner]
-# Settings related to the Python runner process
-magicEnabled = false
-
 [server]
-# Settings related to the web server
-maxUploadSize = 200
+# Explicitly tell Streamlit to use a known stable Python version (e.g., 3.10)
+# This is often done implicitly by setting the Python runtime, 
+# but forcing it here or via a dedicated file is necessary.
+# NOTE: Streamlit Cloud usually relies on a 'runtime.txt' file for this.
