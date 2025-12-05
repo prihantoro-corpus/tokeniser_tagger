@@ -43,6 +43,7 @@ def read_lexicon(lexicon_file: str) -> set:
 
 def preprocess_text(text: str) -> str:
     """Handles quotes and the prefix 'ku' as separate words."""
+    # Replaces words beginning with quote followed by 'ku' with ' ku'
     text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
     return text
 
@@ -53,6 +54,7 @@ def process_word(word: str, lexicon_words: set) -> str:
     # 1. Save and remove end punctuation
     punctuation_match = re.search(r"([!?.,'\"()\[\]{}:;.../\\~_-])$", word)
     punctuation = punctuation_match.group(1) if punctuation_match else ""
+    # Strip the punctuation from the word
     word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
     
     if not word_without_punct:
@@ -86,22 +88,35 @@ def process_word(word: str, lexicon_words: set) -> str:
 # --- HTML/Text Processing Class ---
 
 class TokenisingHTMLParser(HTMLParser):
-    """Parses text, skipping tags, and applying tokenization/clitic separation."""
+    """
+    Parses text, correctly delimiting tags with spaces, and applying 
+    tokenization/clitic separation only to text content.
+    """
     def __init__(self, lexicon_words, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lexicon_words = lexicon_words
         self.processed_text = ""
 
     def handle_starttag(self, tag, attrs):
+        """Reconstructs the opening tag, adding spaces around it."""
         attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
-        self.processed_text += f"<{tag}{attr_str}>"
+        complete_tag = f"<{tag}{attr_str}>"
+        
+        # Add a single space before and after the complete tag string
+        self.processed_text += f" {complete_tag} "
 
     def handle_endtag(self, tag):
-        self.processed_text += f"</{tag}>"
+        """Reconstructs the closing tag, adding spaces around it."""
+        complete_tag = f"</{tag}>"
+        
+        # Add a single space before and after the complete tag string
+        self.processed_text += f" {complete_tag} "
 
     def handle_data(self, data):
+        """Processes the actual text content."""
         text = preprocess_text(data)
-        # Split by space/newline while keeping the delimiters
+        
+        # Split by space/newline while keeping the delimiters (whitespace)
         tokens = re.split(r'(\s+)', text)
         
         processed_tokens = []
@@ -109,6 +124,7 @@ class TokenisingHTMLParser(HTMLParser):
             if token and not token.isspace():
                 processed_tokens.append(process_word(token, self.lexicon_words))
             else:
+                # Keep whitespace as is
                 processed_tokens.append(token)
                 
         self.processed_text += "".join(processed_tokens)
@@ -138,17 +154,22 @@ def main():
     # Process the text when the button is clicked
     if st.button("Tokenize & Separate Clitics", type="primary"):
         if user_input.strip():
+            # Process the input using the parser
             parser = TokenisingHTMLParser(lexicon_set)
             parser.feed(user_input)
             
+            # The output often has leading/trailing spaces due to the tag handling; we strip that.
+            final_processed_text = parser.processed_text.strip()
+            
             st.header("2. Tokenization Output")
-            st.markdown("The output shows clitics separated by a space and hyphen, following your Perl script logic.")
+            st.markdown("Clitics are separated by a space and hyphen (e.g., `rumah -nya`). Tags are separated by spaces.")
             
             # Display the resulting text
-            st.code(parser.processed_text, language='text')
+            st.code(final_processed_text, language='text')
             
             # Optionally show tokens in a list format
-            final_tokens = parser.processed_text.split()
+            # Using split() here breaks the result into individual tokens
+            final_tokens = final_processed_text.split()
             st.subheader("Token List")
             st.write(final_tokens)
             
