@@ -15,9 +15,9 @@ F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—�
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_words: Set[str]) -> List[str]:
     """
-    Applies the full tokenization rules with strict priority. 
-    If a high-priority match (Exception, Abbreviation, Compound) is found, 
-    LOWER priority splitting rules are skipped for that word.
+    Applies the full tokenization rules with absolute priority for Exceptions 
+    and Abbreviation Patterns, preventing general punctuation stripping from 
+    breaking these high-priority tokens.
     """
     tokens = []
     
@@ -34,33 +34,31 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
         suffix = []
         
         # -------------------------------------------------------------
-        # --- PRIORITY CHECKS (Must skip subsequent logic if matched) ---
+        # --- ABSOLUTE PRIORITY CHECKS (If matched, skip splitting) ---
         # -------------------------------------------------------------
         
         # --- PRIORITY 1: Exception List (Exact Match) ---
         if current_word in exception_words:
             tokens.append(current_word)
-            continue # Skip all lower priority splitting
+            continue 
             
         # --- PRIORITY 2: Abbreviation Regex (Pattern Match) ---
         # Catches patterns like A. or U.S.A. (must end with a period).
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
             tokens.append(current_word)
-            continue # Skip all lower priority splitting
+            continue 
             
         # --- PRIORITY 3: Hyphenated Compound Words (Indonesian) ---
-        # Ensures words like 'Buku-buku' are not split by punctuation stripping.
-        # Checks for internal hyphen but excludes clitics (which are processed later).
+        # Ensures words like 'Buku-buku' are not split.
         if '-' in current_word and not re.match(r"^[A-Za-z]+-[nya|mu|ku]$", current_word.lower()):
             tokens.append(current_word)
-            continue # Skip all lower priority splitting
+            continue 
 
         # -------------------------------------------------------------
         # --- SPLITTING AND DISAMBIGUATION (Default Logic) ---
         # -------------------------------------------------------------
         
         # 1. Strip external punctuation (do...while equivalent)
-        # This handles cases like "(word)" -> "(" "word" ")"
         while True:
             finished = True
             
@@ -82,7 +80,6 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
                 break
         
         # 2. Re-check Exception list after stripping surrounding punctuation
-        # (e.g., if input was "(U.S.A.)", U.S.A. remains one token after stripping parentheses)
         if current_word in exception_words:
             tokens.append(current_word)
             tokens.extend(suffix)
@@ -109,7 +106,7 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str], exception_word
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # ... (Implementation remains the same) ...
+    # (Implementation remains the same)
     lexicon_words = set()
     try:
         script_dir = os.path.dirname(__file__)
@@ -134,7 +131,7 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 
 @st.cache_resource 
 def read_exceptions(exception_file: str) -> Set[str]:
-    # ... (Implementation remains the same) ...
+    # (Implementation remains the same)
     exception_words = set()
     try:
         script_dir = os.path.dirname(__file__)
@@ -248,7 +245,7 @@ def main():
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
-            st.markdown("This version uses strict priority: **Exception List** or **Abbreviation Rule** matches completely skip splitting.")
+            st.markdown("This version uses **Absolute Priority**. If a word matches an Exception or Abbreviation rule, it skips all splitting logic.")
             
             st.code(final_processed_text, language='text')
             
