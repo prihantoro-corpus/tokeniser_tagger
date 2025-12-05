@@ -1,8 +1,12 @@
+[general]
+# This command tells Streamlit to run the shell script first, 
+# then install Python dependencies.
+install_command = "bash install_treetagger.sh && pip install -r requirements.txt"
+
 [runner]
-# Use a version of Python known to be stable with older dependencies
-# like TreeTaggerWrapper.
+# Settings related to the Python runner process
 magicEnabled = false
 
 [server]
-# Pin to a stable Python version
-maxUploadSize = 200 # Set a reasonable limit for file uploads (optional)
+# Settings related to the web server
+maxUploadSize = 200
