@@ -3,10 +3,8 @@ import re
 from html.parser import HTMLParser
 import os
 from typing import List, Set
-import configparser # <-- ADD THIS IMPORT
-# CRITICAL FIX for Python 3.12+ (SafeConfigParser removal)
-# This resolves the deployment error by restoring the missing class name.
-configparser.SafeConfigParser = configparser.ConfigParser # <-- ADD THIS LINE
+import configparser
+configparser.SafeConfigParser = configparser.ConfigParser # Fix for Python 3.12+
 import treetaggerwrapper
 import shutil
 
@@ -16,30 +14,23 @@ EXCEPTION_FILENAME = 'exception.txt'
 PARAM_FILE = 'indonesian.par' 
 TT_INSTALL_DIR = "treetagger_install"
 
-# --- 1. TreeTagger Setup and Tagger Function ---
+# --- 1. TreeTagger Setup and Tagger Function (Kept for completeness) ---
 
 @st.cache_resource
 def setup_treetagger():
-    """
-    Checks if TreeTagger was installed by the external shell script and 
-    EXPLICITLY sets environment variables to mimic the working Colab environment.
-    """
-    
+    # Checks if TreeTagger was installed by the external shell script
     BASE_PATH = os.path.abspath(TT_INSTALL_DIR)
     CMD_PATH = os.path.join(BASE_PATH, 'cmd')
     EXECUTABLE_PATH = os.path.join(CMD_PATH, 'tree-tagger') 
     
-    # 1. Check if the core executable exists (installed by install_treetagger.sh)
     if not os.path.exists(EXECUTABLE_PATH):
         st.sidebar.error("❌ TreeTagger executable not found. Installation script likely failed.")
         return None
 
-    # 2. CRITICAL FIX: EXPLICITLY SET ENV VARS for the wrapper to find the executable
     os.environ['PATH'] = f"{os.environ['PATH']}:{CMD_PATH}"
     os.environ['TREETAGGER_HOME'] = BASE_PATH
     os.environ['TAGDIR'] = BASE_PATH
     
-    # 3. Final check for parameter file
     if os.path.exists(os.path.join(BASE_PATH, 'lib', PARAM_FILE)):
         st.sidebar.success("✅ TreeTagger environment successfully configured.")
         return BASE_PATH
@@ -48,27 +39,16 @@ def setup_treetagger():
         return None
 
 def run_pos_tagger(token_list: List[str], tagger_dir: str):
-    """
-    Runs the TreeTagger wrapper on the final token list, producing Token|Tag|Lemma.
-    """
-    if not tagger_dir:
-        return ["Error: Tagger setup failed."]
-        
-    tagger = treetaggerwrapper.TreeTagger(
-        TAGLANG='indonesian', 
-        TAGDIR=tagger_dir,
-        TAGPARFILE=PARAM_FILE 
-    )
-    
+    # Runs the POS Tagger (omitted details for brevity, assumed functional)
+    if not tagger_dir: return ["Error: Tagger setup failed."]
     try:
+        tagger = treetaggerwrapper.TreeTagger(TAGLANG='indonesian', TAGDIR=tagger_dir, TAGPARFILE=PARAM_FILE )
         tags = tagger.tag_list(token_list)
         return tags
     except Exception as e:
-        st.error(f"TreeTagger execution failed. Ensure {PARAM_FILE} is valid.")
-        st.code(f"Error details: {e}")
-        return ["Error during tagging."]
+        return [f"Error during tagging: {e}"]
 
-# --- 2. Pass 2: Full Tokenization Logic (Finalized) ---
+# --- 2. Pass 2: Full Tokenization Logic (TreeTagger Rules) ---
 
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
@@ -173,30 +153,34 @@ def process_word_clitic(word: str, lexicon_words: Set[str]) -> str:
 
     lower_word = word_without_punct.lower()
     
-    # 1. Handle isolated clitics 
-    if lower_word == 'nya':
-        return f"-nya {punctuation}".strip()
-    if lower_word == 'mu':
-        return f"-mu {punctuation}".strip()
-
-    if lower_word in lexicon_words:
-        return original_word
-
-    # 2. Check for clitic suffixes
+    # --- PRIORITY 1: Check for clitic suffixes (Aggressive Split) ---
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
+    
     for clitic, length in clitics.items():
         if lower_word.endswith(clitic):
             root_word = word_without_punct[:-length]
-            if root_word.lower() in lexicon_words:
+            
+            if root_word and root_word.lower() in lexicon_words:
                 return f"{root_word} -{clitic} {punctuation}".strip()
-    
-    # 3. Check for 'ku' prefix
+
+    # --- PRIORITY 2: Check for 'ku' prefix ---
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
         root_word = word_without_punct[2:]
         if root_word.lower() in lexicon_words:
             prefix = original_word[:2] 
             return f"{prefix}- {root_word} {punctuation}".strip()
             
+    # --- PRIORITY 3: Check for full word match (No split necessary) ---
+    if lower_word in lexicon_words:
+        return original_word
+
+    # --- PRIORITY 4: Handle isolated clitics ---
+    if lower_word == 'nya':
+        return f"-nya {punctuation}".strip()
+    if lower_word == 'mu':
+        return f"-mu {punctuation}".strip()
+
+    # 5. If no condition is met, return the word as is
     return original_word
 
 class CliticSeparatorParser(HTMLParser):
@@ -234,7 +218,6 @@ class CliticSeparatorParser(HTMLParser):
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # (Simplified reading)
     lexicon_words = set()
     try:
         script_dir = os.path.dirname(__file__)
@@ -252,7 +235,6 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 
 @st.cache_resource 
 def read_exceptions(exception_file: str) -> Set[str]:
-    # (Simplified reading)
     exception_words = set()
     try:
         script_dir = os.path.dirname(__file__)
