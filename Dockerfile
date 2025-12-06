@@ -20,11 +20,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # --- 3. Install SpaCy Language Models (CRITICAL FIX) ---
-# The 'echo' command acts as a cache buster, forcing a fresh download.
-RUN echo "Starting fresh SpaCy model download (Cache Buster)" && \
-    python -m spacy download en_core_web_sm && \
-    python -m spacy download fr_core_news_sm && \
-    python -m spacy download es_core_web_sm
+# Installing models directly via pip install, which is more reliable in Docker.
+# Using a fixed version (3.7.0) for stability and explicit package names (with hyphens).
+RUN echo "Starting fresh SpaCy model installation (Direct PIP)" && \
+    pip install en-core-web-sm==3.7.0 && \
+    pip install fr-core-news-sm==3.7.0 && \
+    pip install es-core-news-sm==3.7.0
 
 # --- 4. Application Setup ---
 COPY . /app
