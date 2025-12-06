@@ -2,6 +2,7 @@
 FROM python:3.10-slim-buster
 
 # 1. Install Perl and the required module (libhtml-parser-perl)
+# This step explicitly resolves the "Can't locate HTML/Parser.pm" error.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         perl \
@@ -14,10 +15,10 @@ RUN apt-get update && \
 WORKDIR /app
 
 # 3. Copy all local files (app.py, Perl scripts, lexicon) into the container's /app directory
+# This assumes your Dockerfile is in the root directory and copies everything.
 COPY . /app
 
-# 4. Install Python dependencies (like Streamlit, using requirements.txt)
-# You should also create a requirements.txt file containing just 'streamlit'
+# 4. Install Python dependencies (Streamlit)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
