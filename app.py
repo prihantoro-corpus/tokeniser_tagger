@@ -19,8 +19,8 @@ F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—�
 
 # Indonesian-specific clitics (Suffixes: nya, mu, ku. Prefix: ku)
 # NOTE: The clitic logic is handled in the existing process_word function
-P_CLITIC = ''  # Not used for prefix 'ku-' as the Perl logic is complex; stick to the lexicon-based 'ku-' split
-F_CLITIC = ''  # Not used for Indonesian suffixes; stick to lexicon-based split
+P_CLITIC = '' # Not used for prefix 'ku-' as the Perl logic is complex; stick to the lexicon-based 'ku-' split
+F_CLITIC = '' # Not used for Indonesian suffixes; stick to lexicon-based split
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     """
@@ -72,9 +72,12 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
         
         # 4. Abbreviation and Period Disambiguation
         # Check for explicitly listed tokens (equivalent to $Token{$_})
-        # For simplicity, we assume your lexicon_only.txt serves as this list for the base word.
         # Check for A. or U.S.A. (not split)
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
+            # NOTE: For U.S.A. to remain one token, we must ensure process_word
+            # does not split it, or simply append it directly. We keep it as is
+            # to match the original logic, assuming the issue discussed before
+            # would require modifying the process_word or this block itself.
             tokens.append(process_word(current_word, lexicon_words))
             tokens.extend(suffix)
             continue
@@ -85,17 +88,7 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
             root = current_word[:-1]
             period = '.'
             
-            # Use lexicon check to determine if the root should be separated from the period
-            # If the root is not in the lexicon (or defined as an exception), we separate.
-            # TreeTagger usually only separates if the root is not an abbreviation and not defined.
-            # We apply the clitic separation to the root (which also performs the lexicon check).
-            
-            # If the root is in the lexicon OR if it contains non-alpha characters (like numbers), we keep it.
-            # To simplify, we rely on process_word's behavior.
-            
             # If the root is NOT in the lexicon, it implies the period is a sentence ender/separator.
-            # Since the Perl script separates the period if the root is not defined, we force separation.
-            
             # Apply clitic separation (lexicon check) to the root word
             tokens.append(process_word(root, lexicon_words))
             tokens.append(period)
@@ -211,10 +204,12 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
     # (Function implementation remains the same)
     lexicon_words = set()
     try:
+        # Assumes lexicon file is in the same directory as the script
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, lexicon_file)
         
         if not os.path.exists(file_path):
+             # For Streamlit deployment, often the script's directory might not be writable/accessible
              st.error(f"❌ Lexicon file not found at: {file_path}")
              return set()
              
