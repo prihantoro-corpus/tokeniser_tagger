@@ -3,11 +3,12 @@ import re
 from html.parser import HTMLParser
 import os
 from typing import List, Set
+from pathlib import Path # ADDED: For robust path handling
 
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
 
-# --- 1. TreeTagger Tokenization Logic (Perl Equivalent) ---
+# --- 1. TreeTagger Tokenization Logic ---
 
 # Characters that should be cut off/separated at the beginning of a word
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
@@ -17,12 +18,11 @@ F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—�
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     """
-    Applies the core TreeTagger-style tokenization and punctuation separation 
-    to a segment of text. This is a Python port of the 'tokenize.pl' logic.
+    Applies the core TreeTagger-style tokenization and punctuation separation.
     """
     tokens = []
     
-    # Add temporary space padding (similar to Perl's ' '.$_.' ')
+    # Add temporary space padding
     temp_text = ' ' + text_segment + ' '
     
     # --- Punctuation Spacing (FIXED for Abbreviations) ---
@@ -33,8 +33,9 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     # 2. Punctuation like ;, !, ? separated from the next non-space character
     temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
     
-    # 3. FIX: Only separate [.,:] if the following character is NOT an uppercase letter 
-    # (using negative lookahead: (?![A-Z])) to protect abbreviations like U.S.A.
+    # 3. FIX for U.S.A.: Only separate [.,:] if the following character is NOT an uppercase letter 
+    # (using negative lookahead: (?![A-Z])) to protect abbreviations.
+    # We still separate if it's not a space/digit/period.
     temp_text = re.sub(r'([.,:])(?![A-Z])([^\s0-9.])', r'\1 \2', temp_text)
     
     # Split by any whitespace
@@ -91,15 +92,10 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
 # --- 2. HTML/Text Processing Class ---
 
 class TokenisingHTMLParser(HTMLParser):
-    """
-    Parses text, correctly delimiting tags, and applying the full TreeTagger-style
-    tokenization/clitic separation only to text content.
-    """
     def __init__(self, lexicon_words, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lexicon_words = lexicon_words
         self.processed_tokens = [] 
-        self.processed_text = "" 
 
     def handle_starttag(self, tag, attrs):
         attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
@@ -125,7 +121,6 @@ class TokenisingHTMLParser(HTMLParser):
             self.processed_tokens.extend(new_tokens)
     
     def get_tokenized_output(self) -> str:
-        # Join tokens with a single space for the final output string
         return " ".join(self.processed_tokens)
 
 
@@ -173,15 +168,15 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    """Loads the lexicon file for clitic checks."""
+    """Loads the lexicon file for clitic checks using a robust path (FIXED)."""
     lexicon_words = set()
     try:
-        # Get the path relative to the script location
-        script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
-        file_path = os.path.join(script_dir, lexicon_file)
+        # FIX: Use pathlib to reliably find the path relative to the currently executing script
+        script_path = Path(__file__).resolve()
+        file_path = script_path.parent / lexicon_file
         
-        if not os.path.exists(file_path):
-            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found. Please place it next to app.py.")
+        if not file_path.exists():
+            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found. Searched at: {file_path}")
             return set()
             
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -220,11 +215,9 @@ def main():
     if st.button("Run Full Tokenization", type="primary"):
         if user_input.strip():
             
-            # 1. Initialize and feed text to the HTML parser
             parser = TokenisingHTMLParser(lexicon_set)
             parser.feed(user_input)
             
-            # 2. Retrieve the tokenized output
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
