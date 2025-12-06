@@ -19,11 +19,12 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# --- 3. Install SpaCy Language Models (CRITICAL) ---
-# Installing small models for English, French, and Spanish
-RUN python -m spacy download en_core_web_sm && \
+# --- 3. Install SpaCy Language Models (CRITICAL FIX) ---
+# The 'echo' command acts as a cache buster, forcing a fresh download.
+RUN echo "Starting fresh SpaCy model download (Cache Buster)" && \
+    python -m spacy download en_core_web_sm && \
     python -m spacy download fr_core_news_sm && \
-    python -m spacy download es_core_news_sm
+    python -m spacy download es_core_web_sm
 
 # --- 4. Application Setup ---
 COPY . /app
