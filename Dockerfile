@@ -4,7 +4,7 @@ from html.parser import HTMLParser
 import os
 from typing import List, Set
 from pathlib import Path
-import treetaggerwrapper # Keep this import
+import treetaggerwrapper 
 
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
@@ -51,14 +51,14 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
             # 1. Cut off preceding punctuation ($PChar)
             match_p = re.match(r"^(" + P_CHAR + r")(.+)$", current_word)
             if match_p:
-                tokens.append(match_p.group(1)) # Punctuation token
+                tokens.append(match_p.group(1))
                 current_word = match_p.group(2)
                 finished = False
 
             # 2. Cut off trailing punctuation ($FChar)
             match_f = re.match(r"^(.+)(" + F_CHAR + r")$", current_word)
             if match_f:
-                suffix.insert(0, match_f.group(2)) # Punctuation token
+                suffix.insert(0, match_f.group(2))
                 current_word = match_f.group(1)
                 finished = False
                 
@@ -88,13 +88,84 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     return tokens
 
 # --- 2. HTML/Text Processing Class & Core Logic Functions ---
-# (Omitted for brevity in this response, but assumed to be present in the final script)
 
-# --- 3. TreeTagger Installation Test Function ---
+class TokenisingHTMLParser(HTMLParser):
+    """
+    Parses text, correctly delimiting tags, and applying the full TreeTagger-style
+    tokenization/clitic separation only to text content.
+    """
+    def __init__(self, lexicon_words, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lexicon_words = lexicon_words
+        self.processed_tokens = [] 
+
+    def handle_starttag(self, tag, attrs):
+        attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
+        complete_tag = f"<{tag}{attr_str}>"
+        self.processed_tokens.append(complete_tag)
+
+    def handle_endtag(self, tag):
+        complete_tag = f"</{tag}>"
+        self.processed_tokens.append(complete_tag)
+
+    def handle_data(self, data):
+        text = preprocess_text(data)
+        
+        # Split by whitespace to process individual segments
+        segments = re.split(r'(\s+)', text)
+        
+        for segment in segments:
+            if not segment or segment.isspace():
+                continue
+            
+            # Apply the full TreeTagger tokenization to each segment
+            new_tokens = tree_tagger_split(segment, self.lexicon_words)
+            self.processed_tokens.extend(new_tokens)
+    
+    def get_tokenized_output(self) -> str:
+        return " ".join(self.processed_tokens)
+
+def preprocess_text(text: str) -> str:
+    """Handles quotes and the prefix 'ku' as separate words."""
+    text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
+    return text
+
+def process_word(word: str, lexicon_words: Set[str]) -> str:
+    """
+    Applies the lexicon-based clitic separation ('nya', 'mu', 'ku', 'ku-').
+    """
+    original_word = word
+    word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
+    
+    if not word_without_punct:
+        return original_word
+
+    lower_word = word_without_punct.lower()
+    
+    if lower_word in lexicon_words:
+        return original_word
+
+    # Check for clitic suffixes ('nya', 'mu', 'ku')
+    clitics = {'nya': 3, 'mu': 2, 'ku': 2}
+    for clitic, length in clitics.items():
+        if lower_word.endswith(clitic):
+            root_word = word_without_punct[:-length]
+            if root_word.lower() in lexicon_words:
+                return f"{root_word} -{clitic}" 
+    
+    # Check for 'ku' prefix
+    if lower_word.startswith('ku') and len(word_without_punct) > 2:
+        root_word = word_without_punct[2:]
+        if root_word.lower() in lexicon_words:
+            return f"ku- {root_word}"
+            
+    return original_word
+
+# --- 3. TreeTagger Installation Check Function ---
 
 def check_treetagger_installation():
     """
-    Attempts to initialize the TreeTagger wrapper and reports the status.
+    Attempts to initialize the TreeTagger wrapper to verify installation and displays status.
     """
     st.subheader("TreeTagger Installation Check Results:")
     try:
@@ -111,7 +182,6 @@ def check_treetagger_installation():
         
         st.markdown(f"Input: `{test_text}`")
         st.code('\n'.join(tags), language='text')
-        st.info("You can now proceed with your main application logic.")
 
     except Exception as e:
         st.error("❌ **FAILURE!** TreeTagger installation failed or the binary was not found.")
@@ -121,17 +191,16 @@ def check_treetagger_installation():
         st.markdown(
             """
             1.  **Check `requirements.txt`:** Ensure `treetaggerwrapper` is listed.
-            2.  **Check `Dockerfile`:** Verify that `wget`, `unzip`, and `perl` are installed, the TreeTagger binary is downloaded and extracted, and the environment variable `TAGDIR` is set to `/usr/local/treetagger`.
+            2.  **Check `Dockerfile`:** Verify installation of system dependencies (`wget`, `unzip`, `perl`), TreeTagger binary, and setting of the `TAGDIR` environment variable.
             3.  **Check Deployment Logs:** Review the logs on your hosting platform for errors during the Docker build process.
             """
         )
-        # st.exception(e) # Optionally show the full traceback for advanced debugging
 
 # --- 4. Main Streamlit Application Function ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # (Lexicon reading logic remains the same for brevity)
+    """Loads the lexicon file for clitic checks using a robust path."""
     lexicon_words = set()
     try:
         script_path = Path(__file__).resolve()
@@ -158,12 +227,10 @@ def main():
     st.title("🇮🇩 Indonesian Tokeniser (TreeTagger/Python Hybrid)")
     st.markdown("---")
 
+    # AUTO-CHECK: Call the test function immediately upon load
     st.header("1. System Check")
-    # Button to trigger the installation check
-    if st.button("Check Tagger Installation", type="primary"):
-        check_treetagger_installation()
-    
-    st.markdown("---")
+    check_treetagger_installation() 
+    st.markdown("---") 
 
     st.header("2. Tokenization Module (Pure Python)")
     lexicon_set = read_lexicon(LEXICON_FILENAME)
@@ -180,20 +247,28 @@ def main():
         height=150
     )
     
-    if st.button("Run Tokenization"):
+    if st.button("Run Tokenization", type="primary"):
         if user_input.strip():
-            # ... (HTML parsing and tokenization logic)
-            # This part requires the other helper functions (omitted here for space)
-            # You must ensure the original process_word and HTML parser logic are present.
             
-            # Placeholder code for running the actual process:
-            st.warning("Ensure the full `TokenisingHTMLParser` and `process_word` functions are present here.")
-            # parser = TokenisingHTMLParser(lexicon_set)
-            # parser.feed(user_input)
-            # final_processed_text = parser.get_tokenized_output()
-            # st.code(final_processed_text, language='text')
+            parser = TokenisingHTMLParser(lexicon_set)
+            parser.feed(user_input)
+            
+            final_processed_text = parser.get_tokenized_output()
+            
+            st.header("3. Tokenization Output")
+            st.markdown("Output demonstrates: Clitic separation, Punctuation separation, and Abbreviation handling.")
+            
+            # Display tokens joined by a space
+            st.subheader("Tokens (Space Separated)")
+            st.code(final_processed_text, language='text')
+            
+            # Display tokens vertically (TreeTagger standard format)
+            final_tokens = final_processed_text.split()
+            st.subheader("Token List (One Token Per Line)")
+            st.code('\n'.join(final_tokens), language='text')
+            
+        else:
+            st.warning("Please enter some text to process.")
 
 if __name__ == "__main__":
-    # Ensure all missing helper functions (TokenisingHTMLParser, process_word, etc.)
-    # are present in the full script file you use for deployment.
     main()
