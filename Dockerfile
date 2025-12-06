@@ -30,7 +30,6 @@ RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/tree-tagge
     chmod a+x $TREETAGGER_DIR/bin/*
 
 # --- 3. Install Language Files (English Example) ---
-# The wrapper requires language files to initialize successfully.
 WORKDIR $TREETAGGER_DIR/lib
 RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-par-linux-3.2-utf8.bin && \
     wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-abbrev-tags && \
