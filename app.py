@@ -10,34 +10,32 @@ LEXICON_FILENAME = 'lexicon_only.txt'
 # --- 1. TreeTagger Tokenization Logic (Perl Equivalent) ---
 
 # Characters that should be cut off/separated at the beginning of a word
-# [¿¡{(\\`"‚„†‡‹‘’“”•–—›
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 
 # Characters that should be cut off/separated at the end of a word
-# ]}'"`"),;:\!?\%‚„…†‡‰‹‘’“”•–—›
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
-
-# Indonesian-specific clitics (Suffixes: nya, mu, ku. Prefix: ku)
-# NOTE: The clitic logic is handled in the existing process_word function
-P_CLITIC = ''  # Not used for prefix 'ku-' as the Perl logic is complex; stick to the lexicon-based 'ku-' split
-F_CLITIC = ''  # Not used for Indonesian suffixes; stick to lexicon-based split
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     """
     Applies the core TreeTagger-style tokenization and punctuation separation 
-    to a segment of text (which may be a word or punctuation).
-    
-    This function replaces the simple whitespace split from the previous version.
+    to a segment of text. This is a Python port of the 'tokenize.pl' logic.
     """
     tokens = []
     
-    # Add temporary space padding for robust regex matching (equivalent to Perl's ' '.$_.' ')
+    # Add temporary space padding (similar to Perl's ' '.$_.' ')
     temp_text = ' ' + text_segment + ' '
     
-    # Insert missing blanks after punctuation (Perl lines s/([.,:])([^ 0-9.])/$1 $2/g etc.)
+    # --- Punctuation Spacing (FIXED for Abbreviations) ---
+    
+    # 1. Triple-dot separation
     temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
+    
+    # 2. Punctuation like ;, !, ? separated from the next non-space character
     temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
-    temp_text = re.sub(r'([.,:])([^\s0-9.])', r'\1 \2', temp_text)
+    
+    # 3. FIX: Only separate [.,:] if the following character is NOT an uppercase letter 
+    # (using negative lookahead: (?![A-Z])) to protect abbreviations like U.S.A.
+    temp_text = re.sub(r'([.,:])(?![A-Z])([^\s0-9.])', r'\1 \2', temp_text)
     
     # Split by any whitespace
     words = temp_text.split()
@@ -63,38 +61,20 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
                 current_word = match_f.group(1)
                 finished = False
                 
-            # 3. Cut off trailing periods if punctuation precedes (Perl's s/([$FChar])\.$//)
-            # This is complex and often handled by the general punctuation logic. 
-            # We focus on the main TreeTagger period disambiguation.
-
             if finished:
                 break
         
         # 4. Abbreviation and Period Disambiguation
-        # Check for explicitly listed tokens (equivalent to $Token{$_})
-        # For simplicity, we assume your lexicon_only.txt serves as this list for the base word.
-        # Check for A. or U.S.A. (not split)
+        # Check for abbreviations of the form A. or U.S.A. (not split)
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
             tokens.append(process_word(current_word, lexicon_words))
             tokens.extend(suffix)
             continue
             
         # Disambiguate periods: if word ends with '.' AND is not '...' and not a number
-        # If it's not in the lexicon, treat the period as a separator.
         if current_word.endswith('.') and current_word != '...' and not re.match(r"^[0-9]+\.$", current_word):
             root = current_word[:-1]
             period = '.'
-            
-            # Use lexicon check to determine if the root should be separated from the period
-            # If the root is not in the lexicon (or defined as an exception), we separate.
-            # TreeTagger usually only separates if the root is not an abbreviation and not defined.
-            # We apply the clitic separation to the root (which also performs the lexicon check).
-            
-            # If the root is in the lexicon OR if it contains non-alpha characters (like numbers), we keep it.
-            # To simplify, we rely on process_word's behavior.
-            
-            # If the root is NOT in the lexicon, it implies the period is a sentence ender/separator.
-            # Since the Perl script separates the period if the root is not defined, we force separation.
             
             # Apply clitic separation (lexicon check) to the root word
             tokens.append(process_word(root, lexicon_words))
@@ -108,7 +88,7 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
 
     return tokens
 
-# --- 2. HTML/Text Processing Class (Modified for Full Tokenization) ---
+# --- 2. HTML/Text Processing Class ---
 
 class TokenisingHTMLParser(HTMLParser):
     """
@@ -118,32 +98,27 @@ class TokenisingHTMLParser(HTMLParser):
     def __init__(self, lexicon_words, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lexicon_words = lexicon_words
-        self.processed_tokens = [] # Store tokens in a list
-        self.processed_text = ""   # Store joined text
+        self.processed_tokens = [] 
+        self.processed_text = "" 
 
-    # --- HTML Tag Handling (Modified for Desired Output) ---
     def handle_starttag(self, tag, attrs):
-        """Reconstructs the opening tag, appending it as a single token."""
         attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
         complete_tag = f"<{tag}{attr_str}>"
         self.processed_tokens.append(complete_tag)
 
     def handle_endtag(self, tag):
-        """Reconstructs the closing tag, appending it as a single token."""
         complete_tag = f"</{tag}>"
         self.processed_tokens.append(complete_tag)
 
     def handle_data(self, data):
-        """Processes the actual text content using the full tokenizer."""
         text = preprocess_text(data)
         
-        # Split by the special separator character used for SGML isolation in the Perl script
+        # Split by whitespace to process individual segments
         segments = re.split(r'(\s+)', text)
         
         for segment in segments:
             if not segment or segment.isspace():
-                # Keep whitespace/empty strings out of the token list
-                continue 
+                continue
             
             # Apply the full TreeTagger tokenization to each segment
             new_tokens = tree_tagger_split(segment, self.lexicon_words)
@@ -154,7 +129,7 @@ class TokenisingHTMLParser(HTMLParser):
         return " ".join(self.processed_tokens)
 
 
-# --- 3. Core Logic Functions (Clitic Separator - Retained from Part 1) ---
+# --- 3. Core Logic Functions (Clitic Separator) ---
 
 def preprocess_text(text: str) -> str:
     """Handles quotes and the prefix 'ku' as separate words."""
@@ -163,31 +138,21 @@ def preprocess_text(text: str) -> str:
 
 def process_word(word: str, lexicon_words: Set[str]) -> str:
     """
-    Applies the lexicon-based clitic separation (Part 1).
-    Note: This is now called *within* the full tokenization pipeline.
+    Applies the lexicon-based clitic separation ('nya', 'mu', 'ku', 'ku-').
     """
     original_word = word
-    
-    # 1. Check if punctuation exists (handled by tree_tagger_split, but kept for robustness)
-    punctuation_match = re.search(r"([!?.,'\"()\[\]{}:;.../\\~_-])$", word)
-    punctuation = punctuation_match.group(1) if punctuation_match else ""
     word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
-    
-    # If punctuation was stripped by the tokenization, we only proceed with the core word
-    if punctuation:
-        # If tree_tagger_split handles punctuation, this block should ideally only see words
-        pass
     
     if not word_without_punct:
         return original_word
 
     lower_word = word_without_punct.lower()
     
-    # Check if the full word is in the lexicon (no split if it is)
+    # 1. Check if the full word is in the lexicon (no split if it is)
     if lower_word in lexicon_words:
         return original_word
 
-    # Check for clitic suffixes ('nya', 'mu', 'ku')
+    # 2. Check for clitic suffixes ('nya', 'mu', 'ku')
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
     for clitic, length in clitics.items():
         if lower_word.endswith(clitic):
@@ -195,7 +160,7 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             if root_word.lower() in lexicon_words:
                 return f"{root_word} -{clitic}" 
     
-    # Check for 'ku' prefix
+    # 3. Check for 'ku' prefix
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
         root_word = word_without_punct[2:]
         if root_word.lower() in lexicon_words:
@@ -204,20 +169,21 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
     # Return the word as is
     return original_word
 
-# --- 4. Main Streamlit Application Function (Updated Output) ---
+# --- 4. Main Streamlit Application Function ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    # (Function implementation remains the same)
+    """Loads the lexicon file for clitic checks."""
     lexicon_words = set()
     try:
-        script_dir = os.path.dirname(__file__)
+        # Get the path relative to the script location
+        script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
         file_path = os.path.join(script_dir, lexicon_file)
         
         if not os.path.exists(file_path):
-             st.error(f"❌ Lexicon file not found at: {file_path}")
-             return set()
-             
+            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found. Please place it next to app.py.")
+            return set()
+            
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 word = line.strip().lower()
@@ -233,13 +199,14 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 
 
 def main():
-    st.title("🇮🇩 Indonesian Tokeniser (TreeTagger Style)")
+    st.title("🇮🇩 Indonesian Tokeniser (Pure Python)")
+    st.markdown("This version avoids external Perl dependencies by re-implementing the logic in Python.")
     st.markdown("---")
 
     lexicon_set = read_lexicon(LEXICON_FILENAME)
     
     if not lexicon_set:
-        st.warning("Application requires the lexicon to run. Please check file path.")
+        st.warning("Application requires the lexicon to run. Please check file path and content.")
         return
 
     st.header("1. Input Text")
@@ -252,19 +219,24 @@ def main():
     
     if st.button("Run Full Tokenization", type="primary"):
         if user_input.strip():
+            
+            # 1. Initialize and feed text to the HTML parser
             parser = TokenisingHTMLParser(lexicon_set)
             parser.feed(user_input)
             
+            # 2. Retrieve the tokenized output
             final_processed_text = parser.get_tokenized_output()
             
             st.header("2. Tokenization Output")
-            st.markdown("This output performs: Clitic separation (`rumah -nya`), Punctuation separation (`besar !`), Abbreviation handling (`U.S.A.`), and Tag preservation (`<tag>`).")
+            st.markdown("Output demonstrates: Clitic separation (`rumah -nya`), Punctuation separation (`besar !`), **Abbreviation handling (`U.S.A.`)**, and Tag preservation.")
             
+            # Display tokens joined by a space
+            st.subheader("Tokens (Space Separated)")
             st.code(final_processed_text, language='text')
             
+            # Display tokens vertically (TreeTagger standard format)
             final_tokens = final_processed_text.split()
             st.subheader("Token List (One Token Per Line)")
-            # Display tokens vertically, like the original TreeTagger output format
             st.code('\n'.join(final_tokens), language='text')
             
         else:
