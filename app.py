@@ -9,11 +9,9 @@ import spacy # New import
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
 
-# --- 1. Pure Python Tokenization Logic (Stable) ---
+# --- 1. Pure Python Tokenization Logic (Indonesian) ---
 
-# Characters that should be cut off/separated at the beginning of a word
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
-# characters which have to be cut off at the end of a word
 F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
 
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
@@ -147,12 +145,11 @@ def load_spacy_model(model_name: str) -> spacy.language.Language:
         nlp = spacy.load(model_name, disable=["ner", "textcat"])
         return nlp
     except OSError:
-        # Return None if loading failed, handled by the calling function
         return None
 
 def spacy_installation_test():
     st.header("1. SpaCy Installation Check (Separate Module)")
-    st.markdown("This check confirms that the SpaCy library and its language models were installed correctly in the container. **This is separate from the tokenization below.**")
+    st.markdown("This check confirms that the SpaCy library and its language models were installed correctly in the container. **This is separate from the Indonesian tokenization below.**")
 
     language_choice = st.selectbox(
         "Select a Language to Test:",
@@ -161,8 +158,6 @@ def spacy_installation_test():
     )
     
     model_name = MODEL_MAP[language_choice]
-    
-    # Load the model outside the button click to ensure it's available
     nlp = load_spacy_model(model_name)
 
     if nlp is None:
@@ -179,13 +174,10 @@ def spacy_installation_test():
         test_sentence = "Esta es una prueba rápida."
 
     try:
-        # Process the test sentence
         doc = nlp(test_sentence)
-        
-        # Format the output in a TreeTagger-like format: TOKEN \t POS_TAG \t LEMMA
         test_output = ""
         for token in doc:
-            # We use token.tag_ for the fine-grained POS tag
+            # Output in TreeTagger-like format: TOKEN \t POS \t LEMMA
             test_output += f"{token.text}\t{token.tag_}\t{token.lemma_}\n"
 
         st.success(f"✅ **SUCCESS!** SpaCy Model `{model_name}` loaded and is working.")
@@ -227,7 +219,7 @@ def main():
     st.title("🇮🇩 Indonesian Tokeniser (Pure Python)")
     st.markdown("---")
 
-    # The SpaCy installation check runs here, completely separate from the main tokenization logic
+    # The SpaCy installation check runs here
     spacy_installation_test()
     st.markdown("---")
     
