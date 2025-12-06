@@ -1,41 +1,44 @@
 #!/bin/bash
 
-# Define directories
 INSTALL_DIR="treetagger_install"
 mkdir -p "$INSTALL_DIR/lib"
 mkdir -p "$INSTALL_DIR/cmd"
 
-echo "Starting TreeTagger installation into $INSTALL_DIR..."
+echo "Starting TreeTagger installation."
 
-# 1. Install TreeTagger Executable (binary)
+# 1. Download and Extract TreeTagger Executable
+# Use the official download URL
 TT_URL="https://cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/tree-tagger-linux-3.2.2.tar.gz"
-wget -O tt_binary.tar.gz "$TT_URL"
+DOWNLOAD_NAME="tree-tagger-linux-3.2.2.tar.gz"
+EXECUTABLE_NAME="tree-tagger"
 
-# Extract files (This often creates a folder or specific files)
-tar -xzf tt_binary.tar.gz
+wget -q -O "$DOWNLOAD_NAME" "$TT_URL"
 
-# --- CRITICAL FIX ---
-# The tarball extracts a file named 'tree-tagger' into the current directory.
-# We must ensure it's moved to the expected 'cmd' folder.
-if [ -f "tree-tagger" ]; then
-    echo "Executable 'tree-tagger' found. Moving to cmd directory."
-    mv tree-tagger "$INSTALL_DIR/cmd/tree-tagger"
-    chmod +x "$INSTALL_DIR/cmd/tree-tagger"
+if [ -f "$DOWNLOAD_NAME" ]; then
+    # Extract the tarball. It typically extracts the executable named 'tree-tagger'.
+    tar -xzf "$DOWNLOAD_NAME"
+    rm "$DOWNLOAD_NAME"
+
+    # Check for the executable after extraction and move it
+    if [ -f "$EXECUTABLE_NAME" ]; then
+        echo "Executable found. Moving to cmd directory."
+        mv "$EXECUTABLE_NAME" "$INSTALL_DIR/cmd/$EXECUTABLE_NAME"
+        chmod +x "$INSTALL_DIR/cmd/$EXECUTABLE_NAME"
+    else
+        echo "ERROR: Executable not found after extraction. Check tarball contents."
+        exit 1
+    fi
 else
-    echo "ERROR: Executable 'tree-tagger' not found after extraction."
+    echo "ERROR: Failed to download TreeTagger executable."
     exit 1
 fi
-# Remove the downloaded archive file
-rm tt_binary.tar.gz
 
-# 2. Install English Parameter File (required dependency for many taggers)
+# 2. Install English Parameter File (Often required by setup)
 EN_PAR_URL="https://cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-par-3.2.bin"
-wget -O "$INSTALL_DIR/lib/english.par" "$EN_PAR_URL"
-chmod +x "$INSTALL_DIR/lib/english.par"
+wget -q -O "$INSTALL_DIR/lib/english.par" "$EN_PAR_URL"
 
 # 3. Copy your Indonesian Parameter File
-# Assumes indonesian.par is in the root GitHub directory
 cp indonesian.par "$INSTALL_DIR/lib/indonesian.par"
 chmod +x "$INSTALL_DIR/lib/indonesian.par"
 
-echo "TreeTagger and parameters installed successfully."
+echo "TreeTagger and parameters installation complete."
