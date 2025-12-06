@@ -1,130 +1,245 @@
 import streamlit as st
-import subprocess
+import re
+from html.parser import HTMLParser
 import os
-import shutil # Used for directory management
+from typing import List, Set
 
 # --- Configuration ---
-CLITIC_SCRIPT = 'separate-clitic.pl'
-TOKENIZE_SCRIPT = 'tokenize.pl'
-LEXICON_FILE = 'lexicon_only.txt'
-INPUT_DIR = 'INPUT'
-OUTPUT_DIR = 'OUTPUT'
-TEMP_INPUT_FILE = 'temp_input.txt' 
+LEXICON_FILENAME = 'lexicon_only.txt'
 
-def setup_directories():
-    """Ensure the necessary folders exist and clear the output folder."""
-    try:
-        os.makedirs(INPUT_DIR, exist_ok=True)
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        
-        # Clear output folder contents to prevent old files from interfering
-        for filename in os.listdir(OUTPUT_DIR):
-            file_path = os.path.join(OUTPUT_DIR, filename)
-            try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
-            except Exception as e:
-                st.warning(f'Failed to delete {file_path}. Reason: {e}')
+# --- 1. TreeTagger Tokenization Logic (Perl Equivalent) ---
 
-    except Exception as e:
-        st.error(f"Failed to set up directories: {e}")
+# Characters that should be cut off/separated at the beginning of a word
+# [¿¡{(\\`"‚„†‡‹‘’“”•–—›
+P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
 
-def check_lexicon():
-    """Check if the lexicon file is present."""
-    if not os.path.exists(LEXICON_FILE):
-        st.error(f"🚨 **Lexicon Missing:** Please ensure '{LEXICON_FILE}' is in the same directory as this script.")
-        return False
-    return True
+# Characters that should be cut off/separated at the end of a word
+# ]}'"`"),;:\!?\%‚„…†‡‰‹‘’“”•–—›
+F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
 
-def run_perl_pipeline(input_text: str) -> str | None:
+# Indonesian-specific clitics (Suffixes: nya, mu, ku. Prefix: ku)
+# NOTE: The clitic logic is handled in the existing process_word function
+P_CLITIC = ''  # Not used for prefix 'ku-' as the Perl logic is complex; stick to the lexicon-based 'ku-' split
+F_CLITIC = ''  # Not used for Indonesian suffixes; stick to lexicon-based split
+
+def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     """
-    Executes the two-step Perl pipeline: Clitic Separation (File-based) 
-    followed by Tokenization (STDIN/STDOUT-based).
-    """
-    input_file_path = os.path.join(INPUT_DIR, TEMP_INPUT_FILE)
-    output_file_path = os.path.join(OUTPUT_DIR, TEMP_INPUT_FILE)
+    Applies the core TreeTagger-style tokenization and punctuation separation 
+    to a segment of text (which may be a word or punctuation).
     
-    # --- 1. Pass data to the Clitic Script (File-based input) ---
-    try:
-        # Write user input to a temporary file
-        with open(input_file_path, 'w', encoding='utf-8') as f:
-            f.write(input_text)
-    except Exception as e:
-        st.error(f"Error writing temporary input file: {e}")
-        return None
-
-    # --- Step 1: Run Clitic Separation Script (separate-clitic.pl) ---
-    st.info(f"Step 1: Running Clitic Separation ({CLITIC_SCRIPT})...")
-    try:
-        subprocess.run(
-            ['perl', CLITIC_SCRIPT], 
-            check=True, # Raise exception on non-zero exit code
-            capture_output=True, 
-            text=True,
-            encoding='utf-8',
-            timeout=10 # Set a timeout
-        )
-    except subprocess.CalledProcessError as e:
-        st.error(f"❌ **Perl Error (Clitic):** Check Perl dependencies (like HTML::Parser) or file paths.")
-        st.code(e.stderr, language='text')
-        return None
-    except FileNotFoundError:
-        st.error(f"❌ **File Missing:** Perl interpreter or '{CLITIC_SCRIPT}' not found.")
-        return None
-    except subprocess.TimeoutExpired:
-        st.error(f"❌ **Timeout:** {CLITIC_SCRIPT} took too long to execute.")
-        return None
-
-    # 2. Read the output of the clitic script
-    if not os.path.exists(output_file_path):
-        st.error(f"❌ Clitic output file not found: {output_file_path}. Check the Perl script's file handling logic.")
-        return None
+    This function replaces the simple whitespace split from the previous version.
+    """
+    tokens = []
+    
+    # Add temporary space padding for robust regex matching (equivalent to Perl's ' '.$_.' ')
+    temp_text = ' ' + text_segment + ' '
+    
+    # Insert missing blanks after punctuation (Perl lines s/([.,:])([^ 0-9.])/$1 $2/g etc.)
+    temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
+    temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
+    temp_text = re.sub(r'([.,:])([^\s0-9.])', r'\1 \2', temp_text)
+    
+    # Split by any whitespace
+    words = temp_text.split()
+    
+    for word in words:
+        current_word = word
+        suffix = []
         
+        while True:
+            finished = True
+            
+            # 1. Cut off preceding punctuation ($PChar)
+            match_p = re.match(r"^(" + P_CHAR + r")(.+)$", current_word)
+            if match_p:
+                tokens.append(match_p.group(1)) # Punctuation token
+                current_word = match_p.group(2)
+                finished = False
+
+            # 2. Cut off trailing punctuation ($FChar)
+            match_f = re.match(r"^(.+)(" + F_CHAR + r")$", current_word)
+            if match_f:
+                suffix.insert(0, match_f.group(2)) # Punctuation token
+                current_word = match_f.group(1)
+                finished = False
+                
+            # 3. Cut off trailing periods if punctuation precedes (Perl's s/([$FChar])\.$//)
+            # This is complex and often handled by the general punctuation logic. 
+            # We focus on the main TreeTagger period disambiguation.
+
+            if finished:
+                break
+        
+        # 4. Abbreviation and Period Disambiguation
+        # Check for explicitly listed tokens (equivalent to $Token{$_})
+        # For simplicity, we assume your lexicon_only.txt serves as this list for the base word.
+        # Check for A. or U.S.A. (not split)
+        if re.match(r"^([A-Za-z-]\.)+$", current_word):
+            tokens.append(process_word(current_word, lexicon_words))
+            tokens.extend(suffix)
+            continue
+            
+        # Disambiguate periods: if word ends with '.' AND is not '...' and not a number
+        # If it's not in the lexicon, treat the period as a separator.
+        if current_word.endswith('.') and current_word != '...' and not re.match(r"^[0-9]+\.$", current_word):
+            root = current_word[:-1]
+            period = '.'
+            
+            # Use lexicon check to determine if the root should be separated from the period
+            # If the root is not in the lexicon (or defined as an exception), we separate.
+            # TreeTagger usually only separates if the root is not an abbreviation and not defined.
+            # We apply the clitic separation to the root (which also performs the lexicon check).
+            
+            # If the root is in the lexicon OR if it contains non-alpha characters (like numbers), we keep it.
+            # To simplify, we rely on process_word's behavior.
+            
+            # If the root is NOT in the lexicon, it implies the period is a sentence ender/separator.
+            # Since the Perl script separates the period if the root is not defined, we force separation.
+            
+            # Apply clitic separation (lexicon check) to the root word
+            tokens.append(process_word(root, lexicon_words))
+            tokens.append(period)
+            tokens.extend(suffix)
+            continue
+
+        # 5. Apply Indonesian Clitic Separator and add tokens
+        tokens.append(process_word(current_word, lexicon_words))
+        tokens.extend(suffix)
+
+    return tokens
+
+# --- 2. HTML/Text Processing Class (Modified for Full Tokenization) ---
+
+class TokenisingHTMLParser(HTMLParser):
+    """
+    Parses text, correctly delimiting tags, and applying the full TreeTagger-style
+    tokenization/clitic separation only to text content.
+    """
+    def __init__(self, lexicon_words, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lexicon_words = lexicon_words
+        self.processed_tokens = [] # Store tokens in a list
+        self.processed_text = ""   # Store joined text
+
+    # --- HTML Tag Handling (Modified for Desired Output) ---
+    def handle_starttag(self, tag, attrs):
+        """Reconstructs the opening tag, appending it as a single token."""
+        attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
+        complete_tag = f"<{tag}{attr_str}>"
+        self.processed_tokens.append(complete_tag)
+
+    def handle_endtag(self, tag):
+        """Reconstructs the closing tag, appending it as a single token."""
+        complete_tag = f"</{tag}>"
+        self.processed_tokens.append(complete_tag)
+
+    def handle_data(self, data):
+        """Processes the actual text content using the full tokenizer."""
+        text = preprocess_text(data)
+        
+        # Split by the special separator character used for SGML isolation in the Perl script
+        segments = re.split(r'(\s+)', text)
+        
+        for segment in segments:
+            if not segment or segment.isspace():
+                # Keep whitespace/empty strings out of the token list
+                continue 
+            
+            # Apply the full TreeTagger tokenization to each segment
+            new_tokens = tree_tagger_split(segment, self.lexicon_words)
+            self.processed_tokens.extend(new_tokens)
+    
+    def get_tokenized_output(self) -> str:
+        # Join tokens with a single space for the final output string
+        return " ".join(self.processed_tokens)
+
+
+# --- 3. Core Logic Functions (Clitic Separator - Retained from Part 1) ---
+
+def preprocess_text(text: str) -> str:
+    """Handles quotes and the prefix 'ku' as separate words."""
+    text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
+    return text
+
+def process_word(word: str, lexicon_words: Set[str]) -> str:
+    """
+    Applies the lexicon-based clitic separation (Part 1).
+    Note: This is now called *within* the full tokenization pipeline.
+    """
+    original_word = word
+    
+    # 1. Check if punctuation exists (handled by tree_tagger_split, but kept for robustness)
+    punctuation_match = re.search(r"([!?.,'\"()\[\]{}:;.../\\~_-])$", word)
+    punctuation = punctuation_match.group(1) if punctuation_match else ""
+    word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
+    
+    # If punctuation was stripped by the tokenization, we only proceed with the core word
+    if punctuation:
+        # If tree_tagger_split handles punctuation, this block should ideally only see words
+        pass
+    
+    if not word_without_punct:
+        return original_word
+
+    lower_word = word_without_punct.lower()
+    
+    # Check if the full word is in the lexicon (no split if it is)
+    if lower_word in lexicon_words:
+        return original_word
+
+    # Check for clitic suffixes ('nya', 'mu', 'ku')
+    clitics = {'nya': 3, 'mu': 2, 'ku': 2}
+    for clitic, length in clitics.items():
+        if lower_word.endswith(clitic):
+            root_word = word_without_punct[:-length]
+            if root_word.lower() in lexicon_words:
+                return f"{root_word} -{clitic}" 
+    
+    # Check for 'ku' prefix
+    if lower_word.startswith('ku') and len(word_without_punct) > 2:
+        root_word = word_without_punct[2:]
+        if root_word.lower() in lexicon_words:
+            return f"ku- {root_word}"
+            
+    # Return the word as is
+    return original_word
+
+# --- 4. Main Streamlit Application Function (Updated Output) ---
+
+@st.cache_resource 
+def read_lexicon(lexicon_file: str) -> Set[str]:
+    # (Function implementation remains the same)
+    lexicon_words = set()
     try:
-        with open(output_file_path, 'r', encoding='utf-8') as f:
-            clitic_output = f.read()
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, lexicon_file)
+        
+        if not os.path.exists(file_path):
+             st.error(f"❌ Lexicon file not found at: {file_path}")
+             return set()
+             
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                word = line.strip().lower()
+                if word:
+                    lexicon_words.add(word)
+        
+        st.sidebar.success(f"✅ Lexicon loaded: {len(lexicon_words)} words.")
+        return lexicon_words
+        
     except Exception as e:
-        st.error(f"Error reading output from {OUTPUT_DIR}: {e}")
-        return None
+        st.sidebar.error(f"❌ Error loading lexicon: {e}")
+        return set()
 
-    # --- Step 2: Run TreeTagger Tokenization Script (tokenize.pl) ---
-    # This script reads from STDIN and prints to STDOUT, one token per line.
-    st.info(f"Step 2: Running TreeTagger Tokenization ({TOKENIZE_SCRIPT})...")
-    try:
-        # Pass the output of Step 1 to the STDIN of Step 2
-        process = subprocess.run(
-            ['perl', TOKENIZE_SCRIPT, '-u'], # -u enables UTF8 support
-            input=clitic_output,
-            check=True, 
-            capture_output=True, 
-            text=True,
-            encoding='utf-8',
-            timeout=10
-        )
-        return process.stdout.strip()
-
-    except subprocess.CalledProcessError as e:
-        st.error(f"❌ **Perl Error (Tokenize):** Error in {TOKENIZE_SCRIPT}.")
-        st.code(e.stderr, language='text')
-        return None
-    except FileNotFoundError:
-        st.error(f"❌ **File Missing:** Perl interpreter or '{TOKENIZE_SCRIPT}' not found.")
-        return None
-    except subprocess.TimeoutExpired:
-        st.error(f"❌ **Timeout:** {TOKENIZE_SCRIPT} took too long to execute.")
-        return None
-
-
-# --- Main Streamlit Application ---
 
 def main():
-    st.title("🇮🇩 Full Indonesian Tokenizer (Perl Pipeline)")
+    st.title("🇮🇩 Indonesian Tokeniser (TreeTagger Style)")
     st.markdown("---")
 
-    setup_directories()
-    if not check_lexicon():
+    lexicon_set = read_lexicon(LEXICON_FILENAME)
+    
+    if not lexicon_set:
+        st.warning("Application requires the lexicon to run. Please check file path.")
         return
 
     st.header("1. Input Text")
@@ -135,22 +250,25 @@ def main():
         height=150
     )
     
-    if st.button("Run Full Perl Pipeline", type="primary"):
+    if st.button("Run Full Tokenization", type="primary"):
         if user_input.strip():
+            parser = TokenisingHTMLParser(lexicon_set)
+            parser.feed(user_input)
             
-            with st.spinner('Processing...'):
-                final_output = run_perl_pipeline(user_input)
-
-            if final_output:
-                st.header("2. Final Tokenization Output")
-                st.markdown("This output is the result of the two-stage Perl pipeline (Clitics then TreeTagger-style tokenization).")
-                
-                # The output is already one token per line
-                st.code(final_output, language='text')
-                
+            final_processed_text = parser.get_tokenized_output()
+            
+            st.header("2. Tokenization Output")
+            st.markdown("This output performs: Clitic separation (`rumah -nya`), Punctuation separation (`besar !`), Abbreviation handling (`U.S.A.`), and Tag preservation (`<tag>`).")
+            
+            st.code(final_processed_text, language='text')
+            
+            final_tokens = final_processed_text.split()
+            st.subheader("Token List (One Token Per Line)")
+            # Display tokens vertically, like the original TreeTagger output format
+            st.code('\n'.join(final_tokens), language='text')
+            
         else:
             st.warning("Please enter some text to process.")
 
 if __name__ == "__main__":
     main()
-
