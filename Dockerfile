@@ -1,4 +1,4 @@
-# Change the base image to use Python 3.10 or 3.11
+# CRITICAL FIX: Use Python 3.10 to ensure compatibility with treetaggerwrapper 2.3
 FROM python:3.10-slim-buster
 
 # Define the directory where TreeTagger will be installed
@@ -9,6 +9,7 @@ ENV PATH $PATH:$TREETAGGER_DIR/bin
 ENV TAGDIR $TREETAGGER_DIR
 
 # --- 1. Install System Dependencies ---
+# Install tools (wget, unzip), Perl runtime, and build essentials
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         wget \
@@ -20,6 +21,7 @@ RUN apt-get update && \
 
 # --- 2. Install TreeTagger Binary ---
 WORKDIR /tmp
+# Download the TreeTagger executable package
 RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/tree-tagger-linux-3.2.zip && \
     unzip tree-tagger-linux-3.2.zip && \
     mkdir -p $TREETAGGER_DIR && \
@@ -27,7 +29,8 @@ RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/tree-tagge
     rm tree-tagger-linux-3.2.zip && \
     chmod a+x $TREETAGGER_DIR/bin/*
 
-# --- 3. Install Language Files ---
+# --- 3. Install Language Files (English Example) ---
+# The wrapper requires language files to initialize successfully.
 WORKDIR $TREETAGGER_DIR/lib
 RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-par-linux-3.2-utf8.bin && \
     wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-abbrev-tags && \
