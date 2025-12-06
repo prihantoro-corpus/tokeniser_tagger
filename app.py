@@ -3,12 +3,13 @@ import re
 from html.parser import HTMLParser
 import os
 from typing import List, Set
-from pathlib import Path # ADDED: For robust path handling
+from pathlib import Path
+import treetaggerwrapper 
 
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
 
-# --- 1. TreeTagger Tokenization Logic ---
+# --- 1. TreeTagger Tokenization Logic (Pure Python Implementation) ---
 
 # Characters that should be cut off/separated at the beginning of a word
 P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
@@ -19,13 +20,14 @@ F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—�
 def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     """
     Applies the core TreeTagger-style tokenization and punctuation separation.
+    (Contains the fix for U.S.A. splitting, matching the logic in tokenize.pl)
     """
     tokens = []
     
     # Add temporary space padding
     temp_text = ' ' + text_segment + ' '
     
-    # --- Punctuation Spacing (FIXED for Abbreviations) ---
+    # --- Punctuation Spacing ---
     
     # 1. Triple-dot separation
     temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
@@ -33,9 +35,8 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
     # 2. Punctuation like ;, !, ? separated from the next non-space character
     temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
     
-    # 3. FIX for U.S.A.: Only separate [.,:] if the following character is NOT an uppercase letter 
-    # (using negative lookahead: (?![A-Z])) to protect abbreviations.
-    # We still separate if it's not a space/digit/period.
+    # 3. FIX for U.S.A. (matching tokenize.pl's s/([.,:])([^ 0-9.])/$1 $2/g)
+    # Only separate [.,:] if the following character is NOT an uppercase letter 
     temp_text = re.sub(r'([.,:])(?![A-Z])([^\s0-9.])', r'\1 \2', temp_text)
     
     # Split by any whitespace
@@ -51,22 +52,21 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
             # 1. Cut off preceding punctuation ($PChar)
             match_p = re.match(r"^(" + P_CHAR + r")(.+)$", current_word)
             if match_p:
-                tokens.append(match_p.group(1)) # Punctuation token
+                tokens.append(match_p.group(1))
                 current_word = match_p.group(2)
                 finished = False
 
             # 2. Cut off trailing punctuation ($FChar)
             match_f = re.match(r"^(.+)(" + F_CHAR + r")$", current_word)
             if match_f:
-                suffix.insert(0, match_f.group(2)) # Punctuation token
+                suffix.insert(0, match_f.group(2))
                 current_word = match_f.group(1)
                 finished = False
                 
             if finished:
                 break
         
-        # 4. Abbreviation and Period Disambiguation
-        # Check for abbreviations of the form A. or U.S.A. (not split)
+        # 4. Abbreviation and Period Disambiguation (matching tokenize.pl logic)
         if re.match(r"^([A-Za-z-]\.)+$", current_word):
             tokens.append(process_word(current_word, lexicon_words))
             tokens.extend(suffix)
@@ -77,7 +77,6 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
             root = current_word[:-1]
             period = '.'
             
-            # Apply clitic separation (lexicon check) to the root word
             tokens.append(process_word(root, lexicon_words))
             tokens.append(period)
             tokens.extend(suffix)
@@ -89,9 +88,12 @@ def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
 
     return tokens
 
-# --- 2. HTML/Text Processing Class ---
+# --- 2. HTML/Text Processing Class & Core Logic Functions ---
 
 class TokenisingHTMLParser(HTMLParser):
+    """
+    Handles HTML/SGML tags and directs text content to the main tokenization logic.
+    """
     def __init__(self, lexicon_words, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lexicon_words = lexicon_words
@@ -123,11 +125,9 @@ class TokenisingHTMLParser(HTMLParser):
     def get_tokenized_output(self) -> str:
         return " ".join(self.processed_tokens)
 
-
-# --- 3. Core Logic Functions (Clitic Separator) ---
-
 def preprocess_text(text: str) -> str:
-    """Handles quotes and the prefix 'ku' as separate words."""
+    """Handles quotes and the prefix 'ku' as separate words (matching separate-clitic.pl)."""
+    # $text =~ s/(['"]\s*)ku/$1 ku/g;
     text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
     return text
 
@@ -136,6 +136,7 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
     Applies the lexicon-based clitic separation ('nya', 'mu', 'ku', 'ku-').
     """
     original_word = word
+    # Save and remove punctuation attached to the end of the word
     word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
     
     if not word_without_punct:
@@ -143,11 +144,10 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
 
     lower_word = word_without_punct.lower()
     
-    # 1. Check if the full word is in the lexicon (no split if it is)
     if lower_word in lexicon_words:
         return original_word
 
-    # 2. Check for clitic suffixes ('nya', 'mu', 'ku')
+    # 1. Check for clitic suffixes ('nya', 'mu', 'ku')
     clitics = {'nya': 3, 'mu': 2, 'ku': 2}
     for clitic, length in clitics.items():
         if lower_word.endswith(clitic):
@@ -155,28 +155,65 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             if root_word.lower() in lexicon_words:
                 return f"{root_word} -{clitic}" 
     
-    # 3. Check for 'ku' prefix
+    # 2. Check for 'ku' prefix
     if lower_word.startswith('ku') and len(word_without_punct) > 2:
         root_word = word_without_punct[2:]
         if root_word.lower() in lexicon_words:
             return f"ku- {root_word}"
             
-    # Return the word as is
     return original_word
+
+# --- 3. TreeTagger Installation Check Function (CRITICAL FIX) ---
+
+@st.cache_data
+def check_treetagger_installation():
+    """
+    Attempts to initialize the TreeTagger wrapper by explicitly passing TAGDIR 
+    to ensure the binary is found, even if PATH is not inherited properly.
+    """
+    st.subheader("TreeTagger Installation Check Results:")
+    
+    # CRITICAL FIX: Explicitly get TAGDIR from the Docker environment.
+    tag_dir = os.environ.get('TAGDIR', '/usr/local/treetagger') 
+    
+    try:
+        # Pass the TAGDIR directly to the TreeTagger object
+        tagger = treetaggerwrapper.TreeTagger(
+            TAGLANG='en', 
+            TAGDIR=tag_dir
+        )
+        
+        st.success("✅ **SUCCESS!** TreeTagger and wrapper installed successfully!")
+        st.markdown(f"The tagger was initialized using binary path: `{tag_dir}`")
+        
+        # Run a minimal test to confirm the binary executes
+        st.subheader("Minimal Tagging Output:")
+        test_text = "This is a brief test."
+        tags = tagger.tag_text(test_text)
+        
+        st.markdown(f"Input: `{test_text}`")
+        st.code('\n'.join(tags), language='text')
+
+    except Exception as e:
+        st.error("❌ **FAILURE!** TreeTagger installation failed or the binary was not found.")
+        st.markdown(f"The wrapper failed to initialize. Attempted binary path: `{tag_dir}`")
+        st.markdown("---")
+        st.subheader("Last Known Error:")
+        st.code(str(e))
+        st.markdown("Please verify your `Dockerfile` ensures the TreeTagger binary is available at the path above.")
 
 # --- 4. Main Streamlit Application Function ---
 
 @st.cache_resource 
 def read_lexicon(lexicon_file: str) -> Set[str]:
-    """Loads the lexicon file for clitic checks using a robust path (FIXED)."""
+    """Loads the lexicon file for clitic checks using a robust path."""
     lexicon_words = set()
     try:
-        # FIX: Use pathlib to reliably find the path relative to the currently executing script
         script_path = Path(__file__).resolve()
         file_path = script_path.parent / lexicon_file
         
         if not file_path.exists():
-            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found. Searched at: {file_path}")
+            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found.")
             return set()
             
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -192,19 +229,23 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
         st.sidebar.error(f"❌ Error loading lexicon: {e}")
         return set()
 
-
 def main():
-    st.title("🇮🇩 Indonesian Tokeniser (Pure Python)")
-    st.markdown("This version avoids external Perl dependencies by re-implementing the logic in Python.")
+    st.title("🇮🇩 Indonesian Tokeniser (TreeTagger/Python Hybrid)")
     st.markdown("---")
 
+    # AUTO-CHECK: Call the test function immediately upon load
+    st.header("1. System Check")
+    check_treetagger_installation() 
+    st.markdown("---") 
+
+    st.header("2. Tokenization Module (Pure Python)")
     lexicon_set = read_lexicon(LEXICON_FILENAME)
     
     if not lexicon_set:
         st.warning("Application requires the lexicon to run. Please check file path and content.")
         return
 
-    st.header("1. Input Text")
+    st.subheader("Input Text")
     
     user_input = st.text_area(
         "Enter your Indonesian sentence or text:",
@@ -212,7 +253,7 @@ def main():
         height=150
     )
     
-    if st.button("Run Full Tokenization", type="primary"):
+    if st.button("Run Tokenization", type="primary"):
         if user_input.strip():
             
             parser = TokenisingHTMLParser(lexicon_set)
@@ -220,8 +261,8 @@ def main():
             
             final_processed_text = parser.get_tokenized_output()
             
-            st.header("2. Tokenization Output")
-            st.markdown("Output demonstrates: Clitic separation (`rumah -nya`), Punctuation separation (`besar !`), **Abbreviation handling (`U.S.A.`)**, and Tag preservation.")
+            st.header("3. Tokenization Output")
+            st.markdown("Output demonstrates: Clitic separation, Punctuation separation, and Abbreviation handling.")
             
             # Display tokens joined by a space
             st.subheader("Tokens (Space Separated)")
