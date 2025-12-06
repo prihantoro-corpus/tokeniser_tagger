@@ -1,274 +1,45 @@
-import streamlit as st
-import re
-from html.parser import HTMLParser
-import os
-from typing import List, Set
-from pathlib import Path
-import treetaggerwrapper 
+# Change the base image to use Python 3.10 or 3.11
+FROM python:3.10-slim-buster
 
-# --- Configuration ---
-LEXICON_FILENAME = 'lexicon_only.txt'
+# Define the directory where TreeTagger will be installed
+ENV TREETAGGER_DIR /usr/local/treetagger
+# Add TreeTagger binaries to the system PATH
+ENV PATH $PATH:$TREETAGGER_DIR/bin
+# Set the environment variable the Python wrapper looks for
+ENV TAGDIR $TREETAGGER_DIR
 
-# --- 1. TreeTagger Tokenization Logic (Pure Python Implementation) ---
+# --- 1. Install System Dependencies ---
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget \
+        unzip \
+        perl \
+        build-essential && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Characters that should be cut off/separated at the beginning of a word
-P_CHAR = r"[¿¡{()\\[\`\"‚„†‡‹‘’“”•–—›]"
+# --- 2. Install TreeTagger Binary ---
+WORKDIR /tmp
+RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/tree-tagger-linux-3.2.zip && \
+    unzip tree-tagger-linux-3.2.zip && \
+    mkdir -p $TREETAGGER_DIR && \
+    mv tagger/* $TREETAGGER_DIR/ && \
+    rm tree-tagger-linux-3.2.zip && \
+    chmod a+x $TREETAGGER_DIR/bin/*
 
-# Characters that should be cut off/separated at the end of a word
-F_CHAR = r"[\]\}\'\"\`\)\,\;\:\!\?\%‚„…†‡‰‹‘’“”•–—›]"
+# --- 3. Install Language Files ---
+WORKDIR $TREETAGGER_DIR/lib
+RUN wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-par-linux-3.2-utf8.bin && \
+    wget http://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/data/english-abbrev-tags && \
+    mv english-par-linux-3.2-utf8.bin english-utf8.par && \
+    mv english-abbrev-tags english-abbrev.txt
 
-def tree_tagger_split(text_segment: str, lexicon_words: Set[str]) -> List[str]:
-    """
-    Applies the core TreeTagger-style tokenization and punctuation separation.
-    (Contains the fix for U.S.A. splitting)
-    """
-    tokens = []
-    
-    # Add temporary space padding
-    temp_text = ' ' + text_segment + ' '
-    
-    # --- Punctuation Spacing (FIXED for Abbreviations) ---
-    
-    # 1. Triple-dot separation
-    temp_text = re.sub(r'(\.\.\.)', r' \1 ', temp_text)
-    
-    # 2. Punctuation like ;, !, ? separated from the next non-space character
-    temp_text = re.sub(r'([;\!\?])([^\s])', r'\1 \2', temp_text)
-    
-    # 3. FIX for U.S.A.: Only separate [.,:] if the following character is NOT an uppercase letter 
-    temp_text = re.sub(r'([.,:])(?![A-Z])([^\s0-9.])', r'\1 \2', temp_text)
-    
-    # Split by any whitespace
-    words = temp_text.split()
-    
-    for word in words:
-        current_word = word
-        suffix = []
-        
-        while True:
-            finished = True
-            
-            # 1. Cut off preceding punctuation ($PChar)
-            match_p = re.match(r"^(" + P_CHAR + r")(.+)$", current_word)
-            if match_p:
-                tokens.append(match_p.group(1))
-                current_word = match_p.group(2)
-                finished = False
+# --- 4. Install Python Dependencies ---
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-            # 2. Cut off trailing punctuation ($FChar)
-            match_f = re.match(r"^(.+)(" + F_CHAR + r")$", current_word)
-            if match_f:
-                suffix.insert(0, match_f.group(2))
-                current_word = match_f.group(1)
-                finished = False
-                
-            if finished:
-                break
-        
-        # 4. Abbreviation and Period Disambiguation
-        if re.match(r"^([A-Za-z-]\.)+$", current_word):
-            tokens.append(process_word(current_word, lexicon_words))
-            tokens.extend(suffix)
-            continue
-            
-        # Disambiguate periods: if word ends with '.' AND is not '...' and not a number
-        if current_word.endswith('.') and current_word != '...' and not re.match(r"^[0-9]+\.$", current_word):
-            root = current_word[:-1]
-            period = '.'
-            
-            tokens.append(process_word(root, lexicon_words))
-            tokens.append(period)
-            tokens.extend(suffix)
-            continue
-
-        # 5. Apply Indonesian Clitic Separator and add tokens
-        tokens.append(process_word(current_word, lexicon_words))
-        tokens.extend(suffix)
-
-    return tokens
-
-# --- 2. HTML/Text Processing Class & Core Logic Functions ---
-
-class TokenisingHTMLParser(HTMLParser):
-    """
-    Parses text, correctly delimiting tags, and applying the full TreeTagger-style
-    tokenization/clitic separation only to text content.
-    """
-    def __init__(self, lexicon_words, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.lexicon_words = lexicon_words
-        self.processed_tokens = [] 
-
-    def handle_starttag(self, tag, attrs):
-        attr_str = "".join([f' {key}="{value}"' for key, value in attrs])
-        complete_tag = f"<{tag}{attr_str}>"
-        self.processed_tokens.append(complete_tag)
-
-    def handle_endtag(self, tag):
-        complete_tag = f"</{tag}>"
-        self.processed_tokens.append(complete_tag)
-
-    def handle_data(self, data):
-        text = preprocess_text(data)
-        
-        # Split by whitespace to process individual segments
-        segments = re.split(r'(\s+)', text)
-        
-        for segment in segments:
-            if not segment or segment.isspace():
-                continue
-            
-            # Apply the full TreeTagger tokenization to each segment
-            new_tokens = tree_tagger_split(segment, self.lexicon_words)
-            self.processed_tokens.extend(new_tokens)
-    
-    def get_tokenized_output(self) -> str:
-        return " ".join(self.processed_tokens)
-
-def preprocess_text(text: str) -> str:
-    """Handles quotes and the prefix 'ku' as separate words."""
-    text = re.sub(r"(['\"])\s*ku", r"\1 ku", text)
-    return text
-
-def process_word(word: str, lexicon_words: Set[str]) -> str:
-    """
-    Applies the lexicon-based clitic separation ('nya', 'mu', 'ku', 'ku-').
-    """
-    original_word = word
-    word_without_punct = re.sub(r"[!?.,'\"()\[\]{}:;.../\\~_-]$", "", word)
-    
-    if not word_without_punct:
-        return original_word
-
-    lower_word = word_without_punct.lower()
-    
-    if lower_word in lexicon_words:
-        return original_word
-
-    # Check for clitic suffixes ('nya', 'mu', 'ku')
-    clitics = {'nya': 3, 'mu': 2, 'ku': 2}
-    for clitic, length in clitics.items():
-        if lower_word.endswith(clitic):
-            root_word = word_without_punct[:-length]
-            if root_word.lower() in lexicon_words:
-                return f"{root_word} -{clitic}" 
-    
-    # Check for 'ku' prefix
-    if lower_word.startswith('ku') and len(word_without_punct) > 2:
-        root_word = word_without_punct[2:]
-        if root_word.lower() in lexicon_words:
-            return f"ku- {root_word}"
-            
-    return original_word
-
-# --- 3. TreeTagger Installation Check Function ---
-
-def check_treetagger_installation():
-    """
-    Attempts to initialize the TreeTagger wrapper to verify installation and displays status.
-    """
-    st.subheader("TreeTagger Installation Check Results:")
-    try:
-        # Tagger for English, as 'en' files were installed in the Dockerfile.
-        tagger = treetaggerwrapper.TreeTagger(TAGLANG='en')
-        
-        st.success("✅ **SUCCESS!** TreeTagger and wrapper installed successfully!")
-        st.markdown("The wrapper successfully initialized and found the TreeTagger binary for language 'en'.")
-
-        # Run a minimal test to confirm the binary executes
-        st.subheader("Minimal Tagging Output:")
-        test_text = "This is a brief test."
-        tags = tagger.tag_text(test_text)
-        
-        st.markdown(f"Input: `{test_text}`")
-        st.code('\n'.join(tags), language='text')
-
-    except Exception as e:
-        st.error("❌ **FAILURE!** TreeTagger installation failed or the binary was not found.")
-        st.markdown("The `treetaggerwrapper` could not initialize the external program.")
-        st.markdown("---")
-        st.subheader("Troubleshooting Steps:")
-        st.markdown(
-            """
-            1.  **Check `requirements.txt`:** Ensure `treetaggerwrapper` is listed.
-            2.  **Check `Dockerfile`:** Verify installation of system dependencies (`wget`, `unzip`, `perl`), TreeTagger binary, and setting of the `TAGDIR` environment variable.
-            3.  **Check Deployment Logs:** Review the logs on your hosting platform for errors during the Docker build process.
-            """
-        )
-
-# --- 4. Main Streamlit Application Function ---
-
-@st.cache_resource 
-def read_lexicon(lexicon_file: str) -> Set[str]:
-    """Loads the lexicon file for clitic checks using a robust path."""
-    lexicon_words = set()
-    try:
-        script_path = Path(__file__).resolve()
-        file_path = script_path.parent / lexicon_file
-        
-        if not file_path.exists():
-            st.error(f"❌ Lexicon file '{LEXICON_FILENAME}' not found.")
-            return set()
-            
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                word = line.strip().lower()
-                if word:
-                    lexicon_words.add(word)
-        
-        st.sidebar.success(f"✅ Lexicon loaded: {len(lexicon_words)} words.")
-        return lexicon_words
-        
-    except Exception as e:
-        st.sidebar.error(f"❌ Error loading lexicon: {e}")
-        return set()
-
-def main():
-    st.title("🇮🇩 Indonesian Tokeniser (TreeTagger/Python Hybrid)")
-    st.markdown("---")
-
-    # AUTO-CHECK: Call the test function immediately upon load
-    st.header("1. System Check")
-    check_treetagger_installation() 
-    st.markdown("---") 
-
-    st.header("2. Tokenization Module (Pure Python)")
-    lexicon_set = read_lexicon(LEXICON_FILENAME)
-    
-    if not lexicon_set:
-        st.warning("Application requires the lexicon to run. Please check file path and content.")
-        return
-
-    st.subheader("Input Text")
-    
-    user_input = st.text_area(
-        "Enter your Indonesian sentence or text:",
-        "Buku-buku nya ada di U.S.A. Kulihat rumahmu (yang) besar!",
-        height=150
-    )
-    
-    if st.button("Run Tokenization", type="primary"):
-        if user_input.strip():
-            
-            parser = TokenisingHTMLParser(lexicon_set)
-            parser.feed(user_input)
-            
-            final_processed_text = parser.get_tokenized_output()
-            
-            st.header("3. Tokenization Output")
-            st.markdown("Output demonstrates: Clitic separation, Punctuation separation, and Abbreviation handling.")
-            
-            # Display tokens joined by a space
-            st.subheader("Tokens (Space Separated)")
-            st.code(final_processed_text, language='text')
-            
-            # Display tokens vertically (TreeTagger standard format)
-            final_tokens = final_processed_text.split()
-            st.subheader("Token List (One Token Per Line)")
-            st.code('\n'.join(final_tokens), language='text')
-            
-        else:
-            st.warning("Please enter some text to process.")
-
-if __name__ == "__main__":
-    main()
+# --- 5. Application Setup ---
+COPY . /app
+EXPOSE 8501
+ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
