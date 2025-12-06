@@ -2,9 +2,9 @@ import streamlit as st
 import re
 from html.parser import HTMLParser
 import os
-from typing import List, Set
+from typing import List, Set, Dict
 from pathlib import Path
-# Removed: import treetaggerwrapper 
+import spacy # New import
 
 # --- Configuration ---
 LEXICON_FILENAME = 'lexicon_only.txt'
@@ -131,7 +131,70 @@ def process_word(word: str, lexicon_words: Set[str]) -> str:
             
     return original_word
 
-# Removed: @st.cache_data / check_treetagger_installation()
+# --- SpaCy Installation Test Module ---
+
+MODEL_MAP: Dict[str, str] = {
+    "English": "en_core_web_sm",
+    "French": "fr_core_news_sm",
+    "Spanish": "es_core_news_sm",
+}
+
+@st.cache_resource
+def load_spacy_model(model_name: str) -> spacy.language.Language:
+    """Loads a SpaCy model only once and caches it."""
+    try:
+        # Disable unused components to speed up processing and save memory
+        nlp = spacy.load(model_name, disable=["ner", "textcat"])
+        return nlp
+    except OSError:
+        # Return None if loading failed, handled by the calling function
+        return None
+
+def spacy_installation_test():
+    st.header("1. SpaCy Installation Check (Separate Module)")
+    st.markdown("This check confirms that the SpaCy library and its language models were installed correctly in the container. **This is separate from the tokenization below.**")
+
+    language_choice = st.selectbox(
+        "Select a Language to Test:",
+        options=list(MODEL_MAP.keys()),
+        key="spacy_lang_select"
+    )
+    
+    model_name = MODEL_MAP[language_choice]
+    
+    # Load the model outside the button click to ensure it's available
+    nlp = load_spacy_model(model_name)
+
+    if nlp is None:
+        st.error(f"❌ **FAILURE:** SpaCy model for '{language_choice}' failed to load. The app is running, but tagging requires a correct Docker/SpaCy setup.")
+        st.caption("Please ensure the `Dockerfile` correctly runs `python -m spacy download ...` for the models.")
+        return
+
+    # Set the test sentence based on selection
+    if language_choice == "English":
+        test_sentence = "This is a brief test."
+    elif language_choice == "French":
+        test_sentence = "Ceci est un test rapide."
+    elif language_choice == "Spanish":
+        test_sentence = "Esta es una prueba rápida."
+
+    try:
+        # Process the test sentence
+        doc = nlp(test_sentence)
+        
+        # Format the output in a TreeTagger-like format: TOKEN \t POS_TAG \t LEMMA
+        test_output = ""
+        for token in doc:
+            # We use token.tag_ for the fine-grained POS tag
+            test_output += f"{token.text}\t{token.tag_}\t{token.lemma_}\n"
+
+        st.success(f"✅ **SUCCESS!** SpaCy Model `{model_name}` loaded and is working.")
+        st.caption(f"Test sentence: *{test_sentence}*")
+        st.subheader("Test Tagging Output (TOKEN\tPOS\tLEMMA)")
+        st.code(test_output.strip(), language='text')
+
+    except Exception as e:
+        st.error(f"❌ **FAILURE:** SpaCy loaded but encountered an error during processing. Error: {e}")
 
 # --- 4. Main Streamlit Application Function ---
 
@@ -163,9 +226,12 @@ def read_lexicon(lexicon_file: str) -> Set[str]:
 def main():
     st.title("🇮🇩 Indonesian Tokeniser (Pure Python)")
     st.markdown("---")
-    # Removed: System check header
 
-    st.header("1. Tokenization Module")
+    # The SpaCy installation check runs here, completely separate from the main tokenization logic
+    spacy_installation_test()
+    st.markdown("---")
+    
+    st.header("2. Tokenization Module")
     
     st.subheader("Input Text")
     
@@ -190,7 +256,7 @@ def main():
             
             final_processed_text = parser.get_tokenized_output()
             
-            st.header("2. Tokenization Output")
+            st.header("3. Tokenization Output")
             st.markdown("Output demonstrates: Clitic separation, Punctuation separation, and Abbreviation handling.")
             
             st.subheader("Tokens (Space Separated)")
