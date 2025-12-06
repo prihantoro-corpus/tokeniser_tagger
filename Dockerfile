@@ -1,3 +1,7 @@
+# --- 1. Install System Dependencies ---
+# FORCED REBUILD 01/2025
+RUN apt-get update && \
+# ...
 # CRITICAL FIX: Use Python 3.10 to ensure compatibility with treetaggerwrapper 2.3
 FROM python:3.10-slim-buster
 
